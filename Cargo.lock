@@ -2949,6 +2949,7 @@ dependencies = [
  "lz4-sys",
  "opentelemetry",
  "parking_lot",
+ "pin-project",
  "rand",
  "serde",
  "smallvec",

@@ -12,22 +12,21 @@
 //! difference.
 
 use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
+use std::task::Context;
+use std::task::Poll;
+use std::task::ready;
 
 use parking_lot::Mutex;
+use pin_project::pin_project;
 use tokio::sync::Notify;
 
 use crate::error::StorageError;
 use crate::types::Fragment;
 use crate::write_stats::FragmentWriteStats;
-
-/// Result type every leader / follower task yields.
-///
-/// Success carries nothing: the tracker only ever asks whether the write landed, and the caller
-/// that dispatched it already has the address.
-pub type TrackedResult = Result<(), StorageError>;
 
 /// Callback invoked per stored fragment with its header and dedup status.
 pub type FragmentObserver = Arc<dyn Fn(&Fragment, bool) + Send + Sync>;
@@ -54,13 +53,23 @@ pub struct WriteTracker {
 /// State shared between the tracker and every running task.
 struct SharedState {
     /// Number of tasks that have been spawned but not yet finished.
-    /// Decremented by the `DecGuard` inside each task body.
+    /// Decremented by the `DecGuard` each task holds.
     in_flight: AtomicUsize,
     /// First error observed by any task. Later errors are discarded.
     /// Mutex is only touched on the error path (rare) and once at drain.
     first_error: Mutex<Option<StorageError>>,
     /// Notified when `in_flight` transitions to 0 so `await_all` can proceed.
     idle: Notify,
+}
+
+impl SharedState {
+    /// Keeps `error` if no task has reported one before it.
+    fn record_error(&self, error: StorageError) {
+        let mut slot = self.first_error.lock();
+        if slot.is_none() {
+            *slot = Some(error);
+        }
+    }
 }
 
 /// Decrements `in_flight` in its destructor so the counter returns to zero
@@ -72,6 +81,34 @@ impl Drop for DecGuard {
         if self.0.in_flight.fetch_sub(1, Ordering::AcqRel) == 1 {
             self.0.idle.notify_one();
         }
+    }
+}
+
+/// A spawned leader or follower: polls its future in place and records the error it fails with.
+///
+/// What the write succeeds with is dropped: the tracker only asks whether the write landed, and
+/// the caller that dispatched it already has the address. Not an `async` block, which would hold
+/// the future twice, as its capture and again as the value it awaits. The guard counts the task in
+/// flight until the task is dropped, which happens as it completes, after its error is recorded.
+#[pin_project]
+struct TrackedTask<F> {
+    #[pin]
+    future: F,
+    guard: DecGuard,
+}
+
+impl<F, T> Future for TrackedTask<F>
+where
+    F: Future<Output = Result<T, StorageError>>,
+{
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        let this = self.project();
+        if let Err(error) = ready!(this.future.poll(cx)) {
+            this.guard.0.record_error(error);
+        }
+        Poll::Ready(())
     }
 }
 
@@ -116,9 +153,9 @@ impl WriteTracker {
     /// finishes — the tracker does not retain a `JoinHandle` or any per-task
     /// bookkeeping, so memory is bounded by in-flight count rather than total
     /// spawns.
-    pub fn spawn_leader<F>(&self, future: F)
+    pub fn spawn_leader<F, T>(&self, future: F)
     where
-        F: Future<Output = TrackedResult> + Send + 'static,
+        F: Future<Output = Result<T, StorageError>> + Send + 'static,
     {
         self.spawn(future);
     }
@@ -129,30 +166,21 @@ impl WriteTracker {
     ///
     /// Followers are spawned rather than queued so they progress in parallel
     /// with leaders during dispatch instead of stacking up until `await_all`.
-    pub fn register_follower<F>(&self, future: F)
+    pub fn register_follower<F, T>(&self, future: F)
     where
-        F: Future<Output = TrackedResult> + Send + 'static,
+        F: Future<Output = Result<T, StorageError>> + Send + 'static,
     {
         self.spawn(future);
     }
 
-    fn spawn<F>(&self, future: F)
+    /// Spawns `future` as a [`TrackedTask`], counted in flight from here until the task ends.
+    fn spawn<F, T>(&self, future: F)
     where
-        F: Future<Output = TrackedResult> + Send + 'static,
+        F: Future<Output = Result<T, StorageError>> + Send + 'static,
     {
         self.state.in_flight.fetch_add(1, Ordering::Relaxed);
-        let state = Arc::clone(&self.state);
-        let body = async move {
-            let guard = DecGuard(Arc::clone(&state));
-            if let Err(e) = future.await {
-                let mut slot = state.first_error.lock();
-                if slot.is_none() {
-                    *slot = Some(e);
-                }
-            }
-            drop(guard);
-        };
-        lore_base::lore_spawn!(body);
+        let guard = DecGuard(Arc::clone(&self.state));
+        lore_base::lore_spawn!(TrackedTask { future, guard });
     }
 
     /// Wait for every outstanding task to finish and return the first error
@@ -273,8 +301,38 @@ mod tests {
 
     use super::*;
 
-    fn ok_result() -> TrackedResult {
+    fn ok_result() -> Result<(), StorageError> {
         Ok(())
+    }
+
+    /// The size of the task [`WriteTracker::spawn`] makes of `future`.
+    fn task_size<F>(_future: &F) -> usize {
+        size_of::<TrackedTask<F>>()
+    }
+
+    #[test]
+    fn a_task_holds_its_future_once() {
+        let data = [0u8; 1024];
+        let future = async move {
+            tokio::task::yield_now().await;
+            std::hint::black_box(data);
+            ok_result()
+        };
+        assert!(task_size(&future) < 2 * size_of_val(&future));
+    }
+
+    #[test]
+    fn a_task_dropped_before_it_runs_is_no_longer_in_flight() {
+        let tracker = WriteTracker::new();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("a runtime");
+        {
+            let _entered = runtime.enter();
+            tracker.spawn_leader(async { ok_result() });
+        }
+        drop(runtime);
+        assert_eq!(tracker.state.in_flight.load(Ordering::Acquire), 0);
     }
 
     #[tokio::test]
@@ -296,7 +354,7 @@ mod tests {
         let tracker = Arc::new(WriteTracker::new());
         let slow_done = Arc::new(AtomicUsize::new(0));
 
-        tracker.spawn_leader(async { Err(StorageError::internal("boom")) });
+        tracker.spawn_leader(async { Err::<(), _>(StorageError::internal("boom")) });
         for _ in 0..3 {
             let slow_done = Arc::clone(&slow_done);
             tracker.spawn_leader(async move {

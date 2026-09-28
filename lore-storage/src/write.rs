@@ -877,28 +877,23 @@ async fn store_fragment_dispatched(
     }
 
     let deduplicated = query.match_made != StoreMatch::MatchNone;
-    let store_clone = store.clone();
     // The leader takes the counters alone, never the tracker: the tracker is what
     // awaits this task, and `await_all` requires its handle to be the only one.
     let stats = writes.stats();
-    tracker.spawn_leader(async move {
-        leader_body(
-            store_clone,
-            partition,
-            address,
-            fragment,
-            buffer,
-            cache_local,
-            remote_session,
-            query,
-            Some(guard),
-            stats,
-            permit,
-            None,
-        )
-        .await
-        .map(|_stored| ())
-    });
+    tracker.spawn_leader(leader_body(
+        store,
+        partition,
+        address,
+        fragment,
+        buffer,
+        cache_local,
+        remote_session,
+        query,
+        Some(guard),
+        stats,
+        permit,
+        None,
+    ));
     Ok(StoreResult {
         address,
         size_content: fragment.size_content,
