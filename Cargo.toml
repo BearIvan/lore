@@ -212,6 +212,11 @@ debug-assertions = false
 [profile.release.package.quinn]
 debug-assertions = false
 
+# Built with debug assertions, tokio boxes every spawned future over 2 KiB rather than over 16 KiB,
+# a second allocation per spawn that release-lto does not make.
+[profile.release.package.tokio]
+debug-assertions = false
+
 [patch.crates-io]
 quinn-proto = { path = "vendor/quinn-proto" }
 # Fixes a `**` backtracking defect that made the filter silently under-exclude;
