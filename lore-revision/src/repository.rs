@@ -2098,6 +2098,10 @@ pub async fn load_and_connect(
 /// command and hand siblings (via [`RepositoryWriteToken::share`]) to each
 /// construction, keeping the per-path write mutex held across the whole
 /// flow without deadlocking on re-acquisition.
+///
+/// Instance ID recovery and instance registration are boxed. They run only for
+/// an instance missing its ID file or its registration, and inline they would
+/// make every command's future as large as theirs.
 pub async fn load_and_connect_with_token(
     path: &Path,
     access: RepositoryAccess,
@@ -2322,12 +2326,12 @@ pub async fn load_and_connect_with_token(
     // Recover or generate instance ID if the instance file was missing.
     // A zero instance_id means recovery is needed.
     let instance_id = if instance_id.is_zero() {
-        let recovered = crate::instance::recover_instance_id(
+        let recovered = Box::pin(crate::instance::recover_instance_id(
             repository,
             mutable_store.clone(),
             immutable_store.clone(),
             &path.display().to_string(),
-        )
+        ))
         .await;
         let id = recovered.unwrap_or_else(|| {
             lore_debug!("No matching instance found, generating new instance ID");
@@ -2414,11 +2418,11 @@ pub async fn load_and_connect_with_token(
             .await
             .map_or(true, |h| h.is_zero());
         if needs_registration
-            && let Err(err) = crate::instance::register_instance(
+            && let Err(err) = Box::pin(crate::instance::register_instance(
                 &repository,
                 instance_id,
                 &path.display().to_string(),
-            )
+            ))
             .await
         {
             lore_warn!("Failed to register instance: {err}");

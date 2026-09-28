@@ -1137,6 +1137,9 @@ const MAX_RECONNECTS_PER_OP: usize = 3;
 /// means no reconnect, no backoff, and no route to the permanent give-up that only the connect
 /// loop sets. Bounding the attempts covers the remaining case: a remote that accepts
 /// connections while failing every RPC on them reconnects successfully every round.
+///
+/// The rebuild is boxed. It runs only after a lost channel, and inline it would make every
+/// request's future as large as a reconnect.
 async fn with_reconnect<T, Op, OpFut, Rebuild, RebuildFut>(
     connection: &GRPCConnection,
     op: Op,
@@ -1151,7 +1154,7 @@ where
     for _ in 0..MAX_RECONNECTS_PER_OP {
         let reconnect_id = connection.reconnect.load(Ordering::Relaxed);
         match op().await {
-            Err(ProtocolError::Disconnected(_)) => rebuild(reconnect_id).await?,
+            Err(ProtocolError::Disconnected(_)) => Box::pin(rebuild(reconnect_id)).await?,
             result => return result,
         }
     }
@@ -1866,6 +1869,29 @@ mod tests {
             seen,
             (1..=MAX_RECONNECTS_PER_OP as u32).collect::<Vec<_>>(),
             "each attempt must observe the epoch left by the previous rebuild",
+        );
+    }
+
+    /// A request's future does not hold the rebuild it runs only after a lost channel.
+    #[tokio::test]
+    async fn a_request_does_not_hold_its_rebuild() {
+        let connection = test_connection();
+
+        let request = with_reconnect(
+            &connection,
+            || async { Ok(()) },
+            |_| async {
+                let state = [0u8; 4096];
+                tokio::task::yield_now().await;
+                std::hint::black_box(state);
+                Ok(())
+            },
+        );
+
+        assert!(
+            size_of_val(&request) < 4096,
+            "a request holds {} bytes, its rebuild among them",
+            size_of_val(&request)
         );
     }
 

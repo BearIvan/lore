@@ -2692,6 +2692,9 @@ pub async fn diff3_with_source_cap(
 /// streaming pipeline's memory bound — each in-flight conflict pins
 /// two `NodeChange`s and three open temp files until the text-merge
 /// completes.
+///
+/// The text merge is boxed. Only a conflict with auto-resolve on reaches it,
+/// and inline it would make the step as large as the merge for every item.
 async fn emit_diff_item_with_auto_resolve(
     item: DiffItem,
     auto_resolve: bool,
@@ -2699,7 +2702,7 @@ async fn emit_diff_item_with_auto_resolve(
 ) -> Result<(), BranchError> {
     let item = match item {
         DiffItem::Conflict(pair) if auto_resolve => {
-            match try_auto_resolve_conflict(&pair.0, &pair.1).await? {
+            match Box::pin(try_auto_resolve_conflict(&pair.0, &pair.1)).await? {
                 Some(resolved) => DiffItem::Change(resolved),
                 None => DiffItem::Conflict(pair),
             }
@@ -4965,6 +4968,37 @@ mod tests {
 
             assert_eq!(data.path.as_str(), "new/");
             assert_eq!(data.from_path.as_str(), "old/");
+        }))
+        .await;
+    }
+
+    /// Every three-way diff item passes through the auto-resolve step and few reach the text
+    /// merge, so the step does not hold the merge.
+    #[tokio::test]
+    async fn the_auto_resolve_step_does_not_hold_the_text_merge() {
+        Box::pin(with_execution(async {
+            let repository = null_repository().await;
+            let state = State::new();
+            let change = node_change(
+                &repository,
+                &state,
+                FileAction::Add,
+                NodeFlags::File,
+                "file.txt",
+                None,
+            );
+            let (tx, _rx) = mpsc::channel(1);
+
+            let merge = try_auto_resolve_conflict(&change, &change);
+            let step =
+                emit_diff_item_with_auto_resolve(DiffItem::Change(change.clone()), true, &tx);
+
+            assert!(
+                size_of_val(&step) < size_of_val(&merge),
+                "the step holds {} bytes, the merge {}",
+                size_of_val(&step),
+                size_of_val(&merge)
+            );
         }))
         .await;
     }
