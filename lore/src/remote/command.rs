@@ -4,8 +4,9 @@ use lore_macro::LoreCommand;
 use serde::Deserialize;
 use serde::Serialize;
 
-// The LoreCommand derive generates `invoke_local`, which runs a variant's handler, and a `From`
-// conversion from each variant's arguments.
+// The LoreCommand derive generates `invoke_local`, which runs a variant's handler as a future,
+// `run_local`, which runs it to completion on the calling thread, and a `From` conversion from
+// each variant's arguments.
 #[derive(Debug, Clone, Serialize, Deserialize, LoreCommand)]
 pub enum LoreCommand {
     AuthUserInfo(crate::auth::LoreAuthUserInfoArgs),

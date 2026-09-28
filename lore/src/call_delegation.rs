@@ -1,5 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Epic Games, Inc.
 // SPDX-License-Identifier: MIT
+use std::pin::Pin;
+use std::pin::pin;
+
 use lore_base::error::InvalidArguments;
 use lore_base::error::ShutDown;
 use lore_base::text::TextNotUtf8;
@@ -18,6 +21,7 @@ use crate::interface::LoreEventCallbackConfig;
 use crate::remote::call::service_call;
 use crate::remote::command::LoreCommand;
 use crate::remote::service_process::service_in_use;
+use crate::remote::service_process::service_in_use_blocking;
 
 /// Rejection of a call whose arguments are malformed, before the verb runs.
 #[error_set]
@@ -71,11 +75,12 @@ fn validate_call_text<ArgsType: ValidateText>(
         .map_err(|error| ArgumentError::from(InvalidArguments::from(error)))
 }
 
-/// Runs a C API call to completion: checks its arguments, then hands its command to `run`.
+/// Runs a C API call to completion: checks its arguments, then hands its command to `run`, which
+/// blocks until the command finishes.
 ///
 /// Generic over the arguments only for the check and the conversion to a command, so running the
 /// command is compiled once for each `run` rather than once for each C API function.
-pub(crate) fn run_synchronously<ArgsType, Run, Fut>(
+pub(crate) fn run_synchronously<ArgsType, Run>(
     globals: &LoreGlobalArgs,
     args: &ArgsType,
     callback: LoreEventCallbackConfig,
@@ -83,22 +88,20 @@ pub(crate) fn run_synchronously<ArgsType, Run, Fut>(
 ) -> i32
 where
     ArgsType: ValidateText + Clone + Into<LoreCommand>,
-    Run: FnOnce(LoreGlobalArgs, LoreCommand, LoreEventCallback) -> Fut,
-    Fut: Future<Output = i32>,
+    Run: FnOnce(LoreGlobalArgs, LoreCommand, LoreEventCallback) -> i32,
 {
     let command = validate_call_text(globals, args).map(|()| args.clone().into());
     run_command_synchronously(globals, command, callback, run)
 }
 
-fn run_command_synchronously<Run, Fut>(
+fn run_command_synchronously<Run>(
     globals: &LoreGlobalArgs,
     command: Result<LoreCommand, ArgumentError>,
     callback: LoreEventCallbackConfig,
     run: Run,
 ) -> i32
 where
-    Run: FnOnce(LoreGlobalArgs, LoreCommand, LoreEventCallback) -> Fut,
-    Fut: Future<Output = i32>,
+    Run: FnOnce(LoreGlobalArgs, LoreCommand, LoreEventCallback) -> i32,
 {
     // Ahead of the sizing below, which would build the runtime that shutdown is
     // taking away.
@@ -126,7 +129,7 @@ where
             ArgumentError::from(error),
         ));
     }
-    crate::runtime().block_on(run(globals, command, callback))
+    run(globals, command, callback)
 }
 
 /// Checks a C API call's arguments as [`run_synchronously`] does, then starts its command on the
@@ -204,12 +207,26 @@ async fn reject_call(
 
 /// Runs `command` to completion, in the Lore service when one is in use and in this process
 /// otherwise. Blocks on the runtime, so it is called from outside it.
+///
+/// Checks for the service before choosing what to run, so the calling thread's stack holds the
+/// relay's future or this command's, never a future sized for every command.
 pub fn run_command(
     globals: LoreGlobalArgs,
     command: LoreCommand,
     callback: LoreEventCallback,
 ) -> i32 {
-    crate::runtime().block_on(dispatch_command(globals, command, callback))
+    if service_in_use_blocking() {
+        run_relayed(globals, command, callback)
+    } else {
+        command.run_local(globals, callback)
+    }
+}
+
+/// Relays `command` to the Lore service and blocks until it finishes. Not inlined, so the relay's
+/// future is in a frame of its own rather than under every command run in this process.
+#[inline(never)]
+fn run_relayed(globals: LoreGlobalArgs, command: LoreCommand, callback: LoreEventCallback) -> i32 {
+    block_on_command(pin!(service_call(globals, command, callback)))
 }
 
 /// Runs `command` to completion in this process, for the commands that act on the Lore service
@@ -219,19 +236,31 @@ pub fn run_command_locally(
     command: LoreCommand,
     callback: LoreEventCallback,
 ) -> i32 {
-    crate::runtime().block_on(invoke_locally(globals, command, callback))
+    command.run_local(globals, callback)
+}
+
+/// Blocks on `running`, a command's future pinned in the caller's frame.
+///
+/// Taken as `dyn Future`, every command blocks through one instantiation of `block_on`, and the
+/// runtime, which boxes a large future it is handed by value, has only a reference to hold.
+pub(crate) fn block_on_command(running: Pin<&mut dyn Future<Output = i32>>) -> i32 {
+    crate::runtime().block_on(running)
 }
 
 /// Runs `command` in the Lore service when one is in use and in this process otherwise.
+///
+/// Pins each future it awaits, for the reason `LoreCommand::invoke_local` gives.
 pub(crate) async fn dispatch_command(
     globals: LoreGlobalArgs,
     command: LoreCommand,
     callback: LoreEventCallback,
 ) -> i32 {
     if service_in_use().await {
-        service_call(globals, command, callback).await
+        let relay = pin!(service_call(globals, command, callback));
+        relay.await
     } else {
-        command.invoke_local(globals, callback).await
+        let handler = pin!(command.invoke_local(globals, callback));
+        handler.await
     }
 }
 
@@ -409,11 +438,8 @@ mod tests {
             args,
             no_callback(),
             move |_globals, _args, _callback| {
-                let reached = handler_reached.clone();
-                async move {
-                    reached.store(true, Ordering::Release);
-                    0
-                }
+                handler_reached.store(true, Ordering::Release);
+                0
             },
         );
         (status, reached.load(Ordering::Acquire))

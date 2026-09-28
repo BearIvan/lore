@@ -87,7 +87,7 @@ mod tests {
                     .with_write_token(write_token.share()),
                 );
 
-                let state = Arc::new(State::new());
+                let state = State::new();
                 state
                     .node_add(
                         repository.clone(),
@@ -181,7 +181,7 @@ mod tests {
                     .with_write_token(write_token.share()),
                 );
 
-                let state = Arc::new(State::new());
+                let state = State::new();
                 state
                     .node_add(
                         repository.clone(),
@@ -268,7 +268,7 @@ mod tests {
                     .with_write_token(write_token.share()),
                 );
 
-                let state_from = Arc::new(State::new());
+                let state_from = State::new();
 
                 let name = "test-node";
                 let node = Node {
@@ -420,13 +420,13 @@ mod tests {
                 .await
                 .expect("Failed to write the metadata payload");
 
-                let state_from = Arc::new(State::new());
+                let state_from = State::new();
                 state_from
                     .serialize(repository.clone(), write_token)
                     .await
                     .expect("Failed to serialize from state");
 
-                let state_to = Arc::new(State::new());
+                let state_to = State::new();
                 state_to
                     .serialize(repository.clone(), write_token)
                     .await
@@ -628,7 +628,7 @@ mod tests {
                 let repository = Arc::new(RepositoryContext::new(
                     default_repository_creation_args(immutable_store, mutable_store),
                 ));
-                body(repository, Arc::new(State::new())).await;
+                body(repository, State::new()).await;
             }))
             .await
             .expect("Test task failed");
@@ -1324,7 +1324,7 @@ mod single_file_compare_result_tests {
         NodeChangeState {
             mapping: lore_revision::state::NodeMapping {
                 repository,
-                state: Arc::new(State::new()),
+                state: State::new(),
                 path: RelativePath::new_from_initial_path(path).unwrap_or_default(),
                 node: INVALID_NODE,
             },

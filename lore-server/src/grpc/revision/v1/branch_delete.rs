@@ -253,7 +253,7 @@ mod test {
         .await
         .expect("Could not create main branch");
 
-        let state = Arc::new(state::State::new());
+        let state = state::State::new();
         state.set_parent_self(Hash::default());
         state.set_revision_number(1);
         let state_hash = state

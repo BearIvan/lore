@@ -43,6 +43,8 @@ pub use lore_revision::repository::LoreSharedStoreMode;
 use crate::call_delegation::dispatch_command;
 use crate::call_delegation::invoke_locally;
 use crate::call_delegation::run_asynchronously;
+use crate::call_delegation::run_command;
+use crate::call_delegation::run_command_locally;
 use crate::call_delegation::run_synchronously;
 use crate::log;
 
@@ -129,7 +131,7 @@ pub extern "C" fn lore_auth_user_info(
     args: &LoreAuthUserInfoArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_auth_user_info`.
@@ -170,7 +172,7 @@ pub extern "C" fn lore_auth_login_with_token(
     args: &LoreAuthLoginWithTokenArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_auth_login_with_token`.
@@ -213,7 +215,7 @@ pub extern "C" fn lore_auth_list(
     args: &LoreAuthListArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_auth_list`.
@@ -250,7 +252,7 @@ pub extern "C" fn lore_auth_logout(
     args: &LoreAuthLogoutArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_auth_logout`.
@@ -287,7 +289,7 @@ pub extern "C" fn lore_auth_clear(
     args: &LoreAuthClearArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_auth_clear`.
@@ -347,7 +349,7 @@ pub extern "C" fn lore_auth_local_user_info(
     args: &LoreAuthLocalUserInfoArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_auth_local_user_info`.
@@ -391,7 +393,7 @@ pub extern "C" fn lore_auth_login_interactive(
     args: &LoreAuthLoginInteractiveArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_auth_login_interactive`.
@@ -462,7 +464,7 @@ pub extern "C" fn lore_branch_create(
     args: &LoreBranchCreateArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_branch_create`.
@@ -532,7 +534,7 @@ pub extern "C" fn lore_branch_info(
     args: &LoreBranchInfoArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_branch_info`.
@@ -603,7 +605,7 @@ pub extern "C" fn lore_branch_diff(
     args: &LoreBranchDiffArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_branch_diff`.
@@ -674,7 +676,7 @@ pub extern "C" fn lore_branch_protect(
     args: &LoreBranchProtectArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_branch_protect`.
@@ -738,7 +740,7 @@ pub extern "C" fn lore_branch_unprotect(
     args: &LoreBranchUnprotectArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_branch_unprotect`.
@@ -802,7 +804,7 @@ pub extern "C" fn lore_branch_archive(
     args: &LoreBranchArchiveArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_branch_archive`.
@@ -868,7 +870,7 @@ pub extern "C" fn lore_branch_list(
     args: &LoreBranchListArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_branch_list`.
@@ -936,7 +938,7 @@ pub extern "C" fn lore_branch_merge_abort(
     args: &LoreBranchMergeAbortArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_branch_merge_abort`.
@@ -1003,7 +1005,7 @@ pub extern "C" fn lore_branch_merge_unresolve(
     args: &LoreBranchMergeUnresolveArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_branch_merge_unresolve`.
@@ -1083,7 +1085,7 @@ pub extern "C" fn lore_branch_merge_into(
     args: &LoreBranchMergeIntoArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_branch_merge_into`.
@@ -1163,7 +1165,7 @@ pub extern "C" fn lore_branch_merge_resolve(
     args: &LoreBranchMergeResolveArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_branch_merge_resolve`.
@@ -1229,7 +1231,7 @@ pub extern "C" fn lore_branch_merge_resolve_mine(
     args: &LoreBranchMergeResolveMineArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_branch_merge_resolve_mine`.
@@ -1295,7 +1297,7 @@ pub extern "C" fn lore_branch_merge_resolve_theirs(
     args: &LoreBranchMergeResolveTheirsArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_branch_merge_resolve_theirs`.
@@ -1362,7 +1364,7 @@ pub extern "C" fn lore_branch_merge_restart(
     args: &LoreBranchMergeRestartArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_branch_merge_restart`.
@@ -1439,7 +1441,7 @@ pub extern "C" fn lore_branch_merge_start(
     args: &LoreBranchMergeStartArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_branch_merge_start`.
@@ -1521,7 +1523,7 @@ pub extern "C" fn lore_branch_switch(
     args: &LoreBranchSwitchArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_branch_switch`.
@@ -1592,7 +1594,7 @@ pub extern "C" fn lore_branch_reset(
     args: &LoreBranchResetArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_branch_reset`.
@@ -1666,7 +1668,7 @@ pub extern "C" fn lore_branch_push(
     args: &LoreBranchPushArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_branch_push`.
@@ -1719,7 +1721,7 @@ pub extern "C" fn lore_branch_metadata_get(
     args: &LoreBranchMetadataGetArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_branch_metadata_get`.
@@ -1741,7 +1743,7 @@ pub extern "C" fn lore_branch_metadata_set(
     args: &LoreBranchMetadataSetArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_branch_metadata_set`.
@@ -1763,7 +1765,7 @@ pub extern "C" fn lore_branch_metadata_clear(
     args: &LoreBranchMetadataClearArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_branch_metadata_clear`.
@@ -1806,7 +1808,7 @@ pub extern "C" fn lore_file_info(
     args: &LoreFileInfoArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_file_info`.
@@ -1870,7 +1872,7 @@ pub extern "C" fn lore_file_diff(
     args: &LoreFileDiffArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_file_diff`.
@@ -1934,7 +1936,7 @@ pub extern "C" fn lore_file_hash(
     args: &LoreFileHashArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_file_hash`.
@@ -1998,7 +2000,7 @@ pub extern "C" fn lore_file_history(
     args: &LoreFileHistoryArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_file_history`.
@@ -2062,7 +2064,7 @@ pub extern "C" fn lore_file_metadata_clear(
     args: &LoreFileMetadataClearArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_file_metadata_clear`.
@@ -2126,7 +2128,7 @@ pub extern "C" fn lore_file_metadata_get(
     args: &LoreFileMetadataGetArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_file_metadata_get`.
@@ -2190,7 +2192,7 @@ pub extern "C" fn lore_file_metadata_list(
     args: &LoreFileMetadataListArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_file_metadata_list`.
@@ -2248,7 +2250,7 @@ pub extern "C" fn lore_file_metadata_set(
     args: &LoreFileMetadataSetArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_file_metadata_set`.
@@ -2312,7 +2314,7 @@ pub extern "C" fn lore_file_reset(
     args: &LoreFileResetArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_file_reset`.
@@ -2387,7 +2389,7 @@ pub extern "C" fn lore_file_reset_to_last_merged(
     args: &LoreFileResetToLastMergedArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_file_reset_to_last_merged`.
@@ -2461,7 +2463,7 @@ pub extern "C" fn lore_file_stage(
     args: &LoreFileStageArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_file_stage`.
@@ -2533,7 +2535,7 @@ pub extern "C" fn lore_file_stage_merge(
     args: &LoreFileStageMergeArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_file_stage_merge`.
@@ -2603,7 +2605,7 @@ pub extern "C" fn lore_file_stage_move(
     args: &LoreFileStageMoveArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_file_stage_move`.
@@ -2674,7 +2676,7 @@ pub extern "C" fn lore_file_dirty(
     args: &LoreFileDirtyArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_file_dirty`.
@@ -2737,7 +2739,7 @@ pub extern "C" fn lore_file_dirty_move(
     args: &LoreFileDirtyMoveArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_file_dirty_move`.
@@ -2792,7 +2794,7 @@ pub extern "C" fn lore_file_dirty_copy(
     args: &LoreFileDirtyCopyArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_file_dirty_copy`.
@@ -2854,7 +2856,7 @@ pub extern "C" fn lore_file_unstage(
     args: &LoreFileUnstageArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_file_unstage`.
@@ -2922,7 +2924,7 @@ pub extern "C" fn lore_file_write(
     args: &LoreFileWriteArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_file_write`.
@@ -2986,7 +2988,7 @@ pub extern "C" fn lore_file_obliterate(
     args: &LoreFileObliterateArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_file_obliterate`.
@@ -3050,7 +3052,7 @@ pub extern "C" fn lore_file_dump(
     args: &LoreFileDumpArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_file_dump`.
@@ -3112,7 +3114,7 @@ pub extern "C" fn lore_file_dependency_add(
     args: &LoreFileDependencyAddArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_file_dependency_add`.
@@ -3172,7 +3174,7 @@ pub extern "C" fn lore_file_dependency_remove(
     args: &LoreFileDependencyRemoveArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_file_dependency_remove`.
@@ -3234,7 +3236,7 @@ pub extern "C" fn lore_file_dependency_list(
     args: &LoreFileDependencyListArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_file_dependency_list`.
@@ -3299,7 +3301,7 @@ pub extern "C" fn lore_lock_file_acquire(
     args: &LoreLockFileAcquireArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_lock_file_acquire`.
@@ -3365,7 +3367,7 @@ pub extern "C" fn lore_lock_file_status(
     args: &LoreLockFileStatusArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_lock_file_status`.
@@ -3431,7 +3433,7 @@ pub extern "C" fn lore_lock_file_query(
     args: &LoreLockFileQueryArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_lock_file_query`.
@@ -3497,7 +3499,7 @@ pub extern "C" fn lore_lock_file_release(
     args: &LoreLockFileReleaseArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_lock_file_release`.
@@ -3565,7 +3567,7 @@ pub extern "C" fn lore_link_add(
     args: &LoreLinkAddArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_link_add`.
@@ -3632,7 +3634,7 @@ pub extern "C" fn lore_link_remove(
     args: &LoreLinkRemoveArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_link_remove`.
@@ -3696,7 +3698,7 @@ pub extern "C" fn lore_link_info(
     args: &LoreLinkInfoArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_link_info`.
@@ -3760,7 +3762,7 @@ pub extern "C" fn lore_link_list(
     args: &LoreLinkListArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_link_list`.
@@ -3824,7 +3826,7 @@ pub extern "C" fn lore_link_update(
     args: &LoreLinkUpdateArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_link_update`.
@@ -3896,7 +3898,7 @@ pub extern "C" fn lore_repository_clone(
     args: &LoreRepositoryCloneArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_repository_clone`.
@@ -3968,7 +3970,7 @@ pub extern "C" fn lore_repository_info(
     args: &LoreRepositoryInfoArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_repository_info`.
@@ -4035,7 +4037,7 @@ pub extern "C" fn lore_repository_dump(
     args: &LoreRepositoryDumpArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_repository_dump`.
@@ -4103,7 +4105,7 @@ pub extern "C" fn lore_repository_create(
     args: &LoreRepositoryCreateArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_repository_create`.
@@ -4161,7 +4163,7 @@ pub extern "C" fn lore_repository_flush(
     args: &LoreRepositoryFlushArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_repository_flush`.
@@ -4213,7 +4215,7 @@ pub extern "C" fn lore_repository_gc(
     args: &LoreRepositoryGcArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_repository_gc`.
@@ -4269,7 +4271,7 @@ pub extern "C" fn lore_repository_release(
     args: &LoreRepositoryReleaseArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_repository_release`.
@@ -4327,7 +4329,7 @@ pub extern "C" fn lore_layer_add(
     args: &LoreLayerAddArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_layer_add`.
@@ -4385,7 +4387,7 @@ pub extern "C" fn lore_layer_remove(
     args: &LoreLayerRemoveArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_layer_remove`.
@@ -4443,7 +4445,7 @@ pub extern "C" fn lore_layer_list(
     args: &LoreLayerListArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_layer_list`.
@@ -4507,7 +4509,7 @@ pub extern "C" fn lore_repository_list(
     args: &LoreRepositoryListArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_repository_list`.
@@ -4573,7 +4575,7 @@ pub extern "C" fn lore_repository_status(
     args: &LoreRepositoryStatusArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_repository_status`.
@@ -4640,7 +4642,7 @@ pub extern "C" fn lore_repository_store_immutable_query(
     args: &LoreRepositoryStoreImmutableQueryArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_repository_store_immutable_query`.
@@ -4708,7 +4710,7 @@ pub extern "C" fn lore_repository_verify_state(
     args: &LoreRepositoryVerifyStateArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_repository_verify_state`.
@@ -4780,7 +4782,7 @@ pub extern "C" fn lore_revision_commit(
     args: &LoreRevisionCommitArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_revision_commit`.
@@ -4850,7 +4852,7 @@ pub extern "C" fn lore_revision_amend(
     args: &LoreRevisionAmendArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_revision_amend`.
@@ -4917,7 +4919,7 @@ pub extern "C" fn lore_revision_info(
     args: &LoreRevisionInfoArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_revision_info`.
@@ -4984,7 +4986,7 @@ pub extern "C" fn lore_revision_diff(
     args: &LoreRevisionDiffArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_revision_diff`.
@@ -5049,7 +5051,7 @@ pub extern "C" fn lore_revision_find(
     args: &LoreRevisionFindArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_revision_find`.
@@ -5114,7 +5116,7 @@ pub extern "C" fn lore_revision_history(
     args: &LoreRevisionHistoryArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_revision_history`.
@@ -5194,7 +5196,7 @@ pub extern "C" fn lore_revision_restore(
     args: &LoreRevisionRestoreArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_revision_restore`.
@@ -5273,7 +5275,7 @@ pub extern "C" fn lore_revision_metadata_clear(
     args: &LoreRevisionMetadataClearArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_revision_metadata_clear`.
@@ -5337,7 +5339,7 @@ pub extern "C" fn lore_revision_metadata_get(
     args: &LoreRevisionMetadataGetArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_revision_metadata_get`.
@@ -5401,7 +5403,7 @@ pub extern "C" fn lore_revision_metadata_list(
     args: &LoreRevisionMetadataListArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_revision_metadata_list`.
@@ -5459,7 +5461,7 @@ pub extern "C" fn lore_revision_metadata_set(
     args: &LoreRevisionMetadataSetArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_revision_metadata_set`.
@@ -5532,7 +5534,7 @@ pub extern "C" fn lore_revision_sync(
     args: &LoreRevisionSyncArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_revision_sync`.
@@ -5622,7 +5624,7 @@ pub extern "C" fn lore_revision_revert(
     args: &LoreRevisionRevertArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_revision_revert`.
@@ -5699,7 +5701,7 @@ pub extern "C" fn lore_revision_revert_abort(
     args: &LoreRevisionRevertAbortArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_revision_revert_abort`.
@@ -5766,7 +5768,7 @@ pub extern "C" fn lore_revision_revert_unresolve(
     args: &LoreRevisionRevertUnresolveArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_revision_revert_unresolve`.
@@ -5833,7 +5835,7 @@ pub extern "C" fn lore_revision_revert_restart(
     args: &LoreRevisionRevertRestartArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_revision_revert_restart`.
@@ -5900,7 +5902,7 @@ pub extern "C" fn lore_revision_revert_resolve(
     args: &LoreRevisionRevertResolveArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_revision_revert_resolve`.
@@ -5966,7 +5968,7 @@ pub extern "C" fn lore_revision_revert_resolve_mine(
     args: &LoreRevisionRevertResolveMineArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_revision_revert_resolve_mine`.
@@ -6032,7 +6034,7 @@ pub extern "C" fn lore_revision_revert_resolve_theirs(
     args: &LoreRevisionRevertResolveTheirsArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_revision_revert_resolve_theirs`.
@@ -6097,7 +6099,7 @@ pub extern "C" fn lore_shared_store_create(
     args: &LoreSharedStoreCreateArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Create a new shared store at the specified path (async).
@@ -6161,7 +6163,7 @@ pub extern "C" fn lore_shared_store_info(
     args: &LoreSharedStoreInfoArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Retrieve the path of the configured default shared store (async).
@@ -6220,7 +6222,7 @@ pub extern "C" fn lore_shared_store_set_use_automatically(
     args: &LoreSharedStoreSetUseAutomaticallyArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Set whether to automatically use the shared store (async).
@@ -6265,7 +6267,7 @@ pub extern "C" fn lore_storage_open(
     args: &LoreStorageOpenArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Open a content-addressed storage handle (async variant).
@@ -6296,7 +6298,7 @@ pub extern "C" fn lore_storage_put(
     args: &LoreStoragePutArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Store one or more content-addressed buffers (async variant).
@@ -6329,7 +6331,7 @@ pub extern "C" fn lore_storage_get(
     args: &LoreStorageGetArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Read one or more content-addressed buffers (async variant).
@@ -6375,7 +6377,7 @@ pub extern "C" fn lore_storage_get_resolved(
     args: &LoreStorageGetResolvedArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Resolve one or more mutable keys and read the content they name (async variant).
@@ -6438,7 +6440,7 @@ pub extern "C" fn lore_storage_put_resolved(
     args: &LoreStoragePutResolvedArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Store one or more buffers and publish a mutable key naming each (async variant).
@@ -6464,7 +6466,7 @@ pub extern "C" fn lore_storage_close(
     args: &LoreStorageCloseArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Release a content-addressed storage handle (async variant).
@@ -6490,7 +6492,7 @@ pub extern "C" fn lore_storage_flush(
     args: &LoreStorageFlushArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Flush pending writes through the handle's stores (async variant).
@@ -6523,7 +6525,7 @@ pub extern "C" fn lore_storage_get_metadata(
     args: &LoreStorageGetMetadataArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Fetch fragment metadata for one or more addresses (async variant).
@@ -6548,7 +6550,7 @@ pub extern "C" fn lore_storage_obliterate(
     args: &LoreStorageObliterateArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Delete content (async variant).
@@ -6582,7 +6584,7 @@ pub extern "C" fn lore_storage_mutable_load(
     args: &LoreStorageMutableLoadArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Read one or more mutable key values (async variant).
@@ -6616,7 +6618,7 @@ pub extern "C" fn lore_storage_mutable_store(
     args: &LoreStorageMutableStoreArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Write one or more mutable key-value pairs (async variant).
@@ -6653,7 +6655,7 @@ pub extern "C" fn lore_storage_mutable_compare_and_swap(
     args: &LoreStorageMutableCompareAndSwapArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Conditionally swap one or more mutable key values (async variant).
@@ -6688,7 +6690,7 @@ pub extern "C" fn lore_storage_mutable_list(
     args: &LoreStorageMutableListArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// List mutable key-value pairs (async variant).
@@ -6714,7 +6716,7 @@ pub extern "C" fn lore_storage_copy(
     args: &LoreStorageCopyArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Copy content (async variant).
@@ -6740,7 +6742,7 @@ pub extern "C" fn lore_storage_put_file(
     args: &LoreStoragePutFileArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Read files into the store (async variant).
@@ -6769,7 +6771,7 @@ pub extern "C" fn lore_storage_get_file(
     args: &LoreStorageGetFileArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Write content to file (async variant).
@@ -6820,7 +6822,7 @@ pub extern "C" fn lore_storage_put_file_resolved(
     args: &LoreStoragePutFileResolvedArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Store one or more files and publish a mutable key naming each (async variant).
@@ -6873,7 +6875,7 @@ pub extern "C" fn lore_storage_get_file_resolved(
     args: &LoreStorageGetFileResolvedArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Resolve mutable keys and write the content they name to files (async variant).
@@ -6901,7 +6903,7 @@ pub extern "C" fn lore_storage_upload(
     args: &LoreStorageUploadArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Upload deferred content (async variant).
@@ -6942,7 +6944,7 @@ pub extern "C" fn lore_service_start(
     args: &LoreServiceStartArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, invoke_locally)
+    run_synchronously(globals, args, callback, run_command_locally)
 }
 
 /// Asynchronous version of `lore_service_start`.
@@ -6997,7 +6999,7 @@ pub extern "C" fn lore_service_stop(
     args: &LoreServiceStopArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, invoke_locally)
+    run_synchronously(globals, args, callback, run_command_locally)
 }
 
 /// Asynchronous version of `lore_service_stop`.
@@ -7054,7 +7056,7 @@ pub extern "C" fn lore_service_set_executable(
     args: &LoreServiceSetExecutableArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, invoke_locally)
+    run_synchronously(globals, args, callback, run_command_locally)
 }
 
 /// Asynchronous version of `lore_service_set_executable`.
@@ -7110,7 +7112,7 @@ pub extern "C" fn lore_service_set_use_automatically(
     args: &LoreServiceSetUseAutomaticallyArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, invoke_locally)
+    run_synchronously(globals, args, callback, run_command_locally)
 }
 
 /// Asynchronous version of `lore_service_set_use_automatically`.
@@ -7173,7 +7175,7 @@ pub extern "C" fn lore_notification_subscribe(
     args: &LoreNotificationSubscribeArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_notification_subscribe`.
@@ -7242,7 +7244,7 @@ pub extern "C" fn lore_notification_unsubscribe(
     args: &LoreNotificationUnsubscribeArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_notification_unsubscribe`.
@@ -7420,7 +7422,7 @@ pub extern "C" fn lore_repository_metadata_get(
     args: &LoreRepositoryMetadataGetArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_repository_metadata_get`.
@@ -7442,7 +7444,7 @@ pub extern "C" fn lore_repository_metadata_set(
     args: &LoreRepositoryMetadataSetArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_repository_metadata_set`.
@@ -7465,7 +7467,7 @@ pub extern "C" fn lore_repository_metadata_clear(
     args: &LoreRepositoryMetadataClearArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_repository_metadata_clear`.
@@ -7487,7 +7489,7 @@ pub extern "C" fn lore_repository_instance_list(
     args: &LoreRepositoryInstanceListArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_repository_instance_list`.
@@ -7513,7 +7515,7 @@ pub extern "C" fn lore_repository_instance_prune(
     args: &LoreRepositoryInstancePruneArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_repository_instance_prune`.
@@ -7536,7 +7538,7 @@ pub extern "C" fn lore_repository_update_path(
     args: &LoreRepositoryUpdatePathArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_repository_update_path`.
@@ -7558,7 +7560,7 @@ pub extern "C" fn lore_repository_config_get(
     args: &LoreRepositoryConfigGetArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Asynchronous version of `lore_repository_config_get`.
@@ -7586,7 +7588,7 @@ pub extern "C" fn lore_revision_tree_load(
     args: &LoreRevisionTreeLoadArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Open a memory-based revision tree handle (async variant).
@@ -7616,7 +7618,7 @@ pub extern "C" fn lore_revision_tree_close(
     args: &LoreRevisionTreeCloseArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Release a memory-based revision tree handle (async variant).
@@ -7644,7 +7646,7 @@ pub extern "C" fn lore_revision_tree_resolve_path(
     args: &LoreRevisionTreeResolvePathArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Resolve a UTF-8 path against a loaded revision tree (async variant).
@@ -7671,7 +7673,7 @@ pub extern "C" fn lore_revision_tree_list_children(
     args: &LoreRevisionTreeListChildrenArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Stream the children of a directory node (async variant).
@@ -7698,7 +7700,7 @@ pub extern "C" fn lore_revision_tree_node_info(
     args: &LoreRevisionTreeNodeInfoArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Fetch the per-node record for a single node id (async variant).
@@ -7725,7 +7727,7 @@ pub extern "C" fn lore_revision_tree_info(
     args: &LoreRevisionTreeInfoArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Fetch the loaded revision's record-level metadata (async variant).
@@ -7753,7 +7755,7 @@ pub extern "C" fn lore_revision_tree_node_path(
     args: &LoreRevisionTreeNodePathArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Reconstruct the full UTF-8 path for a node id (async variant).
@@ -7790,7 +7792,7 @@ pub extern "C" fn lore_revision_tree_add(
     args: &LoreRevisionTreeAddArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Add a batch of nodes to a loaded revision tree (async variant).
@@ -7847,7 +7849,7 @@ pub extern "C" fn lore_revision_tree_delete(
     args: &LoreRevisionTreeDeleteArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Remove a batch of subtrees from a loaded revision tree (async variant).
@@ -7886,7 +7888,7 @@ pub extern "C" fn lore_revision_tree_modify(
     args: &LoreRevisionTreeModifyArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Rewrite a batch of file nodes in a loaded revision tree (async variant).
@@ -7943,7 +7945,7 @@ pub extern "C" fn lore_revision_tree_move(
     args: &LoreRevisionTreeMoveArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Move a batch of nodes in a loaded revision tree (async variant).
@@ -8005,7 +8007,7 @@ pub extern "C" fn lore_revision_tree_metadata_set(
     args: &LoreRevisionTreeMetadataSetArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Record a batch of metadata pairs on a loaded revision tree (async variant).
@@ -8059,7 +8061,7 @@ pub extern "C" fn lore_revision_tree_metadata_get(
     args: &LoreRevisionTreeMetadataGetArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Read a batch of metadata values from a loaded revision tree (async variant).
@@ -8101,7 +8103,7 @@ pub extern "C" fn lore_revision_tree_metadata_clear(
     args: &LoreRevisionTreeMetadataClearArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Remove a batch of metadata keys from a loaded revision tree (async variant).
@@ -8182,7 +8184,7 @@ pub extern "C" fn lore_revision_tree_commit(
     args: &LoreRevisionTreeCommitArgs,
     callback: LoreEventCallbackConfig,
 ) -> i32 {
-    run_synchronously(globals, args, callback, dispatch_command)
+    run_synchronously(globals, args, callback, run_command)
 }
 
 /// Freeze a loaded revision tree into a new revision (async variant).

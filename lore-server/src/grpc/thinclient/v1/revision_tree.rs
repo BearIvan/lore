@@ -281,7 +281,7 @@ mod test {
                 .await
                 .expect("serialize metadata");
 
-            let state = Arc::new(state::State::new());
+            let state = state::State::new();
             state.set_parent_self(parent);
             state.set_revision_number((idx + 1) as u64);
             state.set_metadata_hash(metadata_hash);
@@ -346,7 +346,7 @@ mod test {
             .await
             .expect("serialize metadata");
 
-        let state = Arc::new(state::State::new());
+        let state = state::State::new();
         state.set_parent_self(Hash::default());
         state.set_revision_number(1);
         state.set_metadata_hash(metadata_hash);
@@ -453,7 +453,7 @@ mod test {
             .await
             .expect("serialize metadata");
 
-        let state = Arc::new(state::State::new());
+        let state = state::State::new();
         state.set_parent_self(Hash::default());
         state.set_revision_number(1);
         state.set_metadata_hash(metadata_hash);
@@ -1493,7 +1493,7 @@ mod test {
                 .await
                 .expect("serialize metadata");
 
-            let state = Arc::new(state::State::new());
+            let state = state::State::new();
             state.set_parent_self(Hash::default());
             state.set_revision_number(1);
             state.set_metadata_hash(metadata_hash);

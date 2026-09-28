@@ -2706,7 +2706,7 @@ mod tests {
         node: Node,
         revision: u8,
     ) -> Staged {
-        let state = Arc::new(State::new());
+        let state = State::new();
         state.set_revision(crate::lore::Hash::from([revision; 32]));
         let link = crate::stage::stage_single_node(
             repository.clone(),

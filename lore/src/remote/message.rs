@@ -181,8 +181,10 @@ pub struct MessageToServer {
 }
 
 impl MessageToServer {
-    pub async fn invoke(self, callback: LoreEventCallback) -> i32 {
-        self.command.invoke_local(self.globals, callback).await
+    /// Starts the command's handler in this process. The caller pins the future before awaiting
+    /// it, for the reason `LoreCommand::invoke_local` gives.
+    pub fn invoke(self, callback: LoreEventCallback) -> impl Future<Output = i32> {
+        self.command.invoke_local(self.globals, callback)
     }
 }
 

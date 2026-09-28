@@ -381,7 +381,7 @@ mod tests {
 
     fn make_change(action: lore_revision::change::FileAction) -> NodeChange {
         let ctx = futures::executor::block_on(test_context());
-        let state = Arc::new(state::State::new());
+        let state = state::State::new();
         let (address_from, address_to) = side_addresses();
         NodeChange {
             action,

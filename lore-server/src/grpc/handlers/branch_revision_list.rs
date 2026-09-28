@@ -138,7 +138,7 @@ mod tests {
             .expect("Could not create main branch");
 
             // Create a few revisions
-            let state = Arc::new(state::State::new());
+            let state = state::State::new();
             state.set_parent_self(Hash::default());
             state.set_revision_number(1);
             let first_hash = state
@@ -160,7 +160,7 @@ mod tests {
             .revision;
             assert_eq!(head, first_hash);
 
-            let state = Arc::new(state::State::new());
+            let state = state::State::new();
             state.set_parent_self(first_hash);
             state.set_revision_number(2);
             let second_hash = state
@@ -182,7 +182,7 @@ mod tests {
             .revision;
             assert_eq!(head, second_hash);
 
-            let state = Arc::new(state::State::new());
+            let state = state::State::new();
             state.set_parent_self(second_hash);
             state.set_revision_number(3);
             let third_hash = state
@@ -204,7 +204,7 @@ mod tests {
             .revision;
             assert_eq!(head, third_hash);
 
-            let state = Arc::new(state::State::new());
+            let state = state::State::new();
             state.set_parent_self(third_hash);
             state.set_revision_number(4);
             let fourth_hash = state
@@ -440,7 +440,7 @@ mod tests {
             rev_metadata.set_branch(main).unwrap();
             let metadata_hash = rev_metadata.serialize(repository.clone()).await.unwrap();
 
-            let state = Arc::new(state::State::new());
+            let state = state::State::new();
             state.set_parent_self(Hash::default());
             state.set_revision_number(1);
             state.set_metadata_hash(metadata_hash);
@@ -461,7 +461,7 @@ mod tests {
             .await
             .expect("Failed to push head revision");
 
-            let state = Arc::new(state::State::new());
+            let state = state::State::new();
             state.set_parent_self(first_hash);
             state.set_revision_number(2);
             state.set_metadata_hash(metadata_hash);
@@ -482,7 +482,7 @@ mod tests {
             .await
             .expect("Failed to push head revision");
 
-            let state = Arc::new(state::State::new());
+            let state = state::State::new();
             state.set_parent_self(second_hash);
             state.set_revision_number(3);
             state.set_metadata_hash(metadata_hash);

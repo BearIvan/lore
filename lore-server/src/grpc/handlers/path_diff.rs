@@ -241,7 +241,7 @@ mod tests {
         };
 
         let repository = new_test_context().await;
-        let state = Arc::new(state::State::new());
+        let state = state::State::new();
 
         let addition = NodeChange {
             action: lore_revision::change::FileAction::Add,
@@ -299,7 +299,7 @@ mod tests {
         };
 
         let repository = new_test_context().await;
-        let state = Arc::new(state::State::new());
+        let state = state::State::new();
 
         let deletion = NodeChange {
             action: lore_revision::change::FileAction::Delete,
@@ -361,7 +361,7 @@ mod tests {
         };
 
         let repository = new_test_context().await;
-        let state = Arc::new(state::State::new());
+        let state = state::State::new();
 
         let modification = NodeChange {
             action: lore_revision::change::FileAction::Keep,
@@ -424,7 +424,7 @@ mod tests {
         };
 
         let repository = new_test_context().await;
-        let state = Arc::new(state::State::new());
+        let state = state::State::new();
 
         let addition = NodeChange {
             action: lore_revision::change::FileAction::Add,
@@ -482,7 +482,7 @@ mod tests {
         };
 
         let repository = new_test_context().await;
-        let state = Arc::new(state::State::new());
+        let state = state::State::new();
 
         let link_addition = NodeChange {
             action: lore_revision::change::FileAction::Add,
@@ -540,7 +540,7 @@ mod tests {
         };
 
         let repository = new_test_context().await;
-        let state = Arc::new(state::State::new());
+        let state = state::State::new();
 
         let link_deletion = NodeChange {
             action: lore_revision::change::FileAction::Delete,
@@ -603,7 +603,7 @@ mod tests {
         };
 
         let repository = new_test_context().await;
-        let state = Arc::new(state::State::new());
+        let state = state::State::new();
 
         let link_modification = NodeChange {
             action: lore_revision::change::FileAction::Keep,
@@ -671,7 +671,7 @@ mod tests {
         };
 
         let repository = new_test_context().await;
-        let state = Arc::new(state::State::new());
+        let state = state::State::new();
 
         let automerged_change = NodeChange {
             action: lore_revision::change::FileAction::Keep,
@@ -729,7 +729,7 @@ mod tests {
     #[tokio::test]
     async fn test_mapping_cross_link_sets_partition() {
         let repository = new_test_context().await;
-        let state = Arc::new(state::State::new());
+        let state = state::State::new();
 
         let target_repository = RepositoryId::from(uuid::Uuid::now_v7());
         let a_hash = Hash::hash_buffer(&[30, 31, 32, 33]);
@@ -783,7 +783,7 @@ mod tests {
     #[tokio::test]
     async fn test_mapping_same_repo_partition_empty() {
         let repository = new_test_context().await;
-        let state = Arc::new(state::State::new());
+        let state = state::State::new();
 
         let a_hash = Hash::hash_buffer(&[40, 41, 42, 43]);
         let address_to = Address {
@@ -836,7 +836,7 @@ mod tests {
     #[tokio::test]
     async fn test_mapping_content_inside_link_sets_partition() {
         let repository = new_test_context().await;
-        let state = Arc::new(state::State::new());
+        let state = state::State::new();
 
         let linked_repository_id = RepositoryId::from(uuid::Uuid::now_v7());
         let linked_repository = repository.to_link_context(linked_repository_id).await;
@@ -905,7 +905,7 @@ mod tests {
     #[tokio::test]
     async fn test_mapping_deleted_content_inside_link_sets_partition() {
         let repository = new_test_context().await;
-        let state = Arc::new(state::State::new());
+        let state = state::State::new();
 
         let linked_repository_id = RepositoryId::from(uuid::Uuid::now_v7());
         let linked_repository = repository.to_link_context(linked_repository_id).await;
@@ -956,7 +956,7 @@ mod tests {
     #[tokio::test]
     async fn test_mapping_parent_content_leaves_partition_empty() {
         let repository = new_test_context().await;
-        let state = Arc::new(state::State::new());
+        let state = state::State::new();
 
         let modification = NodeChange {
             action: lore_revision::change::FileAction::Keep,

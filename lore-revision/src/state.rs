@@ -368,16 +368,17 @@ impl StateNodeChildrenIterator {
 /// Number of permits gating block deserialization, taken modulo the block
 /// index.
 ///
-/// A fixed set rather than one permit per block: the permits then cost no
-/// allocation, no lookup and no growth as a tree gets bigger, against two
-/// blocks whose indices collide deserializing one after the other instead of
-/// together.
+/// A fixed set rather than one permit per block: the permits then cost one
+/// allocation per state, no lookup and no growth as a tree gets bigger,
+/// against two blocks whose indices collide deserializing one after the other
+/// instead of together.
 ///
 /// The count trades that collision rate against the size of the array every
-/// state carries. A walk fans out to one task per processor, so a count below
-/// that collides on machines that wide; 256 covers the largest and costs ten
-/// kilobytes. A collision is never a correctness matter - the permits gate
-/// duplicate work, and the publish path re-checks residency whatever they do.
+/// state that loads a block carries. A walk fans out to one task per
+/// processor, so a count below that collides on machines that wide; 256 covers
+/// the largest and costs ten kilobytes. A collision is never a correctness
+/// matter - the permits gate duplicate work, and the publish path re-checks
+/// residency whatever they do.
 const BLOCK_LOADING_PERMITS: usize = 256;
 
 /// Revision state control structure, internally mutable through r/w locks
@@ -395,8 +396,10 @@ pub struct State {
     /// File metadata block deserialization semaphore
     metadata_deserialize: tokio::sync::Semaphore,
     /// Permits held while a block is deserialized, shared by a node block and
-    /// its file metadata block
-    block_loading: [tokio::sync::Semaphore; BLOCK_LOADING_PERMITS],
+    /// its file metadata block. Allocated on the first block load: most states
+    /// are read for their header alone and never load a block, and held inline
+    /// the array would make every `State` 11 KiB.
+    block_loading: std::sync::OnceLock<Box<[tokio::sync::Semaphore]>>,
 }
 
 impl std::fmt::Debug for State {
@@ -584,12 +587,6 @@ impl StateRuntime {
     }
 }
 
-impl Default for State {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// How wide a directory the child collection sizes for once it knows there is a child.
 ///
 /// The nodes are a child-and-sibling list with no count to read, so the width is guessed. A
@@ -606,15 +603,44 @@ fn push_named_child(children: &mut Vec<StateNamedNode>, child: StateNamedNode) {
 }
 
 impl State {
-    pub fn new() -> Self {
-        Self {
-            data: parking_lot::RwLock::new(StateData::new_zeroed()),
-            runtime: parking_lot::RwLock::new(StateRuntime::new(Hash::default(), false)),
-            unused: tokio::sync::Semaphore::new(1),
-            deserialize: tokio::sync::Semaphore::new(1),
-            block_deserialize: tokio::sync::Semaphore::new(1),
-            metadata_deserialize: tokio::sync::Semaphore::new(1),
-            block_loading: std::array::from_fn(|_| tokio::sync::Semaphore::new(1)),
+    /// An empty state, in the `Arc` every state is shared through.
+    pub fn new() -> Arc<Self> {
+        Self::new_shared(&StateData::new_zeroed(), Hash::default(), false)
+    }
+
+    /// Builds the state in its `Arc` allocation, one field at a time. Built as a
+    /// whole, even through `Arc::new_cyclic`, it is assembled on the stack and
+    /// copied into the allocation. The exhaustive pattern stops this compiling
+    /// when `State` gains a field it does not write.
+    fn new_shared(data: &StateData, signature: Hash, rehash_node_names: bool) -> Arc<Self> {
+        let _ = |state: &Self| {
+            let Self {
+                data: _,
+                runtime: _,
+                unused: _,
+                deserialize: _,
+                block_deserialize: _,
+                metadata_deserialize: _,
+                block_loading: _,
+            } = state;
+        };
+        let state = Arc::<Self>::new_uninit();
+        let fields = Arc::as_ptr(&state).cast::<Self>().cast_mut();
+        // SAFETY: `state` has no other owner yet, so nothing can observe the
+        // fields before they are written, and every field is written before
+        // `assume_init`.
+        unsafe {
+            (&raw mut (*fields).data).write(parking_lot::RwLock::new(*data));
+            (&raw mut (*fields).runtime).write(parking_lot::RwLock::new(StateRuntime::new(
+                signature,
+                rehash_node_names,
+            )));
+            (&raw mut (*fields).unused).write(tokio::sync::Semaphore::new(1));
+            (&raw mut (*fields).deserialize).write(tokio::sync::Semaphore::new(1));
+            (&raw mut (*fields).block_deserialize).write(tokio::sync::Semaphore::new(1));
+            (&raw mut (*fields).metadata_deserialize).write(tokio::sync::Semaphore::new(1));
+            (&raw mut (*fields).block_loading).write(std::sync::OnceLock::new());
+            state.assume_init()
         }
     }
 
@@ -662,7 +688,7 @@ impl State {
         signature: Hash,
     ) -> Result<Arc<Self>, StateError> {
         if signature.is_zero() {
-            return Ok(Arc::new(State::new()));
+            return Ok(State::new());
         }
         let address = Address::zero_context_hash(signature);
         let options = read_options_from_repository(&repository);
@@ -706,15 +732,7 @@ impl State {
             let rehash_node_names = data.format < StateFormat::LowerCaseHash as u32;
             // Clean flags
             data.flags &= !StateFlags::Dirty;
-            Ok(Arc::new(State {
-                data: parking_lot::RwLock::new(data),
-                runtime: parking_lot::RwLock::new(StateRuntime::new(signature, rehash_node_names)),
-                unused: tokio::sync::Semaphore::new(1),
-                deserialize: tokio::sync::Semaphore::new(1),
-                block_deserialize: tokio::sync::Semaphore::new(1),
-                metadata_deserialize: tokio::sync::Semaphore::new(1),
-                block_loading: std::array::from_fn(|_| tokio::sync::Semaphore::new(1)),
-            }))
+            Ok(State::new_shared(&data, signature, rehash_node_names))
         }
     }
 
@@ -1331,6 +1349,16 @@ impl State {
         self.block_deserialize(repository, block_index).await.ok()
     }
 
+    /// The permit held while block `block_index` is deserialized.
+    fn block_loading_permit(&self, block_index: usize) -> &tokio::sync::Semaphore {
+        let permits = self.block_loading.get_or_init(|| {
+            (0..BLOCK_LOADING_PERMITS)
+                .map(|_| tokio::sync::Semaphore::new(1))
+                .collect()
+        });
+        &permits[block_index % BLOCK_LOADING_PERMITS]
+    }
+
     async fn block_deserialize(
         &self,
         repository: Arc<RepositoryContext>,
@@ -1346,7 +1374,8 @@ impl State {
             )));
         }
 
-        let loading_permit = self.block_loading[block_index % BLOCK_LOADING_PERMITS]
+        let loading_permit = self
+            .block_loading_permit(block_index)
             .acquire()
             .await
             .internal("Failed to deserialize node block")?;
@@ -1693,7 +1722,8 @@ impl State {
             )));
         }
 
-        let _loading_permit = self.block_loading[block_index % BLOCK_LOADING_PERMITS]
+        let _loading_permit = self
+            .block_loading_permit(block_index)
             .acquire()
             .await
             .internal("Failed to deserialize metadata")?;
@@ -8870,7 +8900,7 @@ mod tests {
     #[tokio::test]
     async fn an_empty_directory_name_leaves_its_parent_on_the_path() {
         let repository = null_repository().await;
-        let state = Arc::new(State::new());
+        let state = State::new();
 
         let file = NodeFlags::DirtyModify | NodeFlags::File;
         let outer = add_dirty_node(
@@ -8899,7 +8929,7 @@ mod tests {
     #[tokio::test]
     async fn a_component_whose_fold_is_longer_is_popped_off_both_forms() {
         let repository = null_repository().await;
-        let state = Arc::new(State::new());
+        let state = State::new();
 
         let folded = add_dirty_node(
             &state,
@@ -8945,7 +8975,7 @@ mod tests {
         const CHILDREN: usize = crate::node::BLOCK_NODE_COUNT + 200;
 
         let repository = null_repository().await;
-        let state = Arc::new(State::new());
+        let state = State::new();
         let directory = add_dirty_node(
             &state,
             repository.clone(),
@@ -9026,7 +9056,7 @@ mod tests {
     #[tokio::test]
     async fn dirty_paths_are_recorded_depth_first_along_each_sibling_chain() {
         let repository = null_repository().await;
-        let state = Arc::new(State::new());
+        let state = State::new();
 
         let gamma = add_dirty_node(
             &state,
@@ -9109,7 +9139,7 @@ mod tests {
     #[tokio::test]
     async fn a_directory_is_recorded_before_the_paths_under_it() {
         let repository = null_repository().await;
-        let state = Arc::new(State::new());
+        let state = State::new();
 
         add_dirty_node(
             &state,
@@ -9157,7 +9187,7 @@ mod tests {
     #[tokio::test]
     async fn a_passed_over_child_does_not_end_its_sibling_chain() {
         let repository = null_repository().await;
-        let state = Arc::new(State::new());
+        let state = State::new();
 
         add_dirty_node(
             &state,
@@ -9224,7 +9254,7 @@ mod tests {
         const DEPTH: usize = 1024;
 
         let repository = null_repository().await;
-        let state = Arc::new(State::new());
+        let state = State::new();
 
         let mut parent = ROOT_NODE;
         for level in 0..DEPTH {
@@ -9263,7 +9293,7 @@ mod tests {
     #[tokio::test]
     async fn a_sibling_cycle_below_the_root_is_reported_against_its_own_parent() {
         let repository = null_repository().await;
-        let state = Arc::new(State::new());
+        let state = State::new();
 
         let sub = add_dirty_node(
             &state,
@@ -9317,7 +9347,7 @@ mod tests {
     #[tokio::test]
     async fn a_link_or_file_walk_root_is_not_descended() {
         let repository = null_repository().await;
-        let state = Arc::new(State::new());
+        let state = State::new();
 
         let link = add_dirty_node(
             &state,
@@ -9399,7 +9429,7 @@ mod tests {
     #[tokio::test]
     async fn a_deleted_or_moved_directory_is_recorded_without_descending() {
         let repository = null_repository().await;
-        let state = Arc::new(State::new());
+        let state = State::new();
 
         let removed = add_dirty_node(
             &state,
@@ -9469,7 +9499,7 @@ mod tests {
     #[tokio::test]
     async fn a_nested_dirty_file_carries_the_whole_prefix() {
         let repository = null_repository().await;
-        let state = Arc::new(State::new());
+        let state = State::new();
 
         let file = NodeFlags::DirtyModify | NodeFlags::File;
         let mut parent = ROOT_NODE;
@@ -9509,7 +9539,7 @@ mod tests {
     #[tokio::test]
     async fn sibling_subtrees_at_one_depth_are_named_against_their_parent() {
         let repository = null_repository().await;
-        let state = Arc::new(State::new());
+        let state = State::new();
 
         let file = NodeFlags::DirtyModify | NodeFlags::File;
         for (subtree, depth) in [("left", 1usize), ("middle", 2), ("right", 3)] {
@@ -9556,7 +9586,7 @@ mod tests {
     #[tokio::test]
     async fn a_directory_is_recorded_before_it_is_descended() {
         let repository = null_repository().await;
-        let state = Arc::new(State::new());
+        let state = State::new();
 
         let file = NodeFlags::DirtyModify | NodeFlags::File;
         add_dirty_node(&state, repository.clone(), ROOT_NODE, "tail.txt", file).await;
@@ -9601,7 +9631,7 @@ mod tests {
     #[tokio::test]
     async fn siblings_after_a_filtered_node_keep_their_own_prefix() {
         let repository = null_repository_excluding(&["blocked"]).await;
-        let state = Arc::new(State::new());
+        let state = State::new();
 
         let file = NodeFlags::DirtyModify | NodeFlags::File;
         let alpha = add_dirty_node(
@@ -9647,7 +9677,7 @@ mod tests {
     #[tokio::test]
     async fn an_empty_node_name_names_its_parent() {
         let repository = null_repository().await;
-        let state = Arc::new(State::new());
+        let state = State::new();
 
         let file = NodeFlags::DirtyModify | NodeFlags::File;
         let outer = add_dirty_node(
@@ -9672,7 +9702,7 @@ mod tests {
     #[tokio::test]
     async fn a_staged_node_is_recorded_only_when_staged_nodes_are_wanted() {
         let repository = null_repository().await;
-        let state = Arc::new(State::new());
+        let state = State::new();
 
         add_dirty_node(
             &state,
@@ -9716,7 +9746,7 @@ mod tests {
     #[tokio::test]
     async fn a_filtered_path_is_recorded_only_under_force() {
         let repository = null_repository_excluding(&["ignored.txt"]).await;
-        let state = Arc::new(State::new());
+        let state = State::new();
 
         for name in ["ignored.txt", "kept.txt"] {
             add_dirty_node(
@@ -9760,7 +9790,7 @@ mod tests {
     #[tokio::test]
     async fn an_excluded_directory_is_not_descended() {
         let repository = null_repository_excluding(&["build"]).await;
-        let state = Arc::new(State::new());
+        let state = State::new();
 
         let build = add_dirty_node(
             &state,
@@ -9817,7 +9847,7 @@ mod tests {
     #[tokio::test]
     async fn walking_from_anything_but_a_directory_records_nothing() {
         let repository = null_repository().await;
-        let state = Arc::new(State::new());
+        let state = State::new();
 
         let file = add_dirty_node(
             &state,
@@ -9850,6 +9880,46 @@ mod tests {
             .expect("walking from a non-directory");
             assert!(paths.is_empty(), "walking from {label} records nothing");
         }
+    }
+
+    /// Most states are read for their header alone, so the block-loading permits
+    /// are allocated by the first block load and not by reading the state.
+    #[tokio::test]
+    async fn the_block_loading_permits_are_allocated_by_the_first_block_load() {
+        let repository = null_repository().await;
+        let state = State::new();
+        add_dirty_node(
+            &state,
+            repository.clone(),
+            ROOT_NODE,
+            "file.txt",
+            NodeFlags::File,
+        )
+        .await;
+        let token = repository
+            .try_write_token()
+            .expect("a null context carries a write token");
+        let signature = state
+            .serialize(repository.clone(), token)
+            .await
+            .expect("serializing the state");
+
+        let loaded = State::deserialize(repository.clone(), signature)
+            .await
+            .expect("deserializing the state");
+        assert!(
+            loaded.block_loading.get().is_none(),
+            "reading the state allocated the permits"
+        );
+
+        loaded
+            .block(repository.clone(), 0)
+            .await
+            .expect("loading the first node block");
+        assert!(
+            loaded.block_loading.get().is_some(),
+            "loading a block allocated no permits"
+        );
     }
 }
 

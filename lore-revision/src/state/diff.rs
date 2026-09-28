@@ -1773,7 +1773,7 @@ mod tests {
     /// descending: the nodes carry no computed address, so the walk pairs them on the staged
     /// flag instead.
     async fn chain_state(repository: &Arc<RepositoryContext>, content: &[u8]) -> Arc<State> {
-        let state = Arc::new(State::new());
+        let state = State::new();
         let stage = async |path: RelativePath, node| {
             crate::stage::stage_single_node(
                 repository.clone(),

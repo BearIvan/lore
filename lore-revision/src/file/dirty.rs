@@ -1470,7 +1470,7 @@ mod tests {
 
         LORE_CONTEXT
             .scope(execution, async move {
-                let state = Arc::new(State::new());
+                let state = State::new();
                 dirty_relative_paths_in(repository, state.clone(), state, paths)
                     .await
                     .expect("marking the named paths");
@@ -1506,7 +1506,7 @@ mod tests {
 
         LORE_CONTEXT
             .scope(execution, async move {
-                let state = Arc::new(State::new());
+                let state = State::new();
                 let stats = walk_root(&repository, &state).await;
 
                 assert_eq!(
@@ -1542,7 +1542,7 @@ mod tests {
 
         LORE_CONTEXT
             .scope(execution, async move {
-                let state = Arc::new(State::new());
+                let state = State::new();
                 let tracked = Node {
                     flags: NodeFlags::File.bits(),
                     name_hash: crate::hash::hash_string("file.txt"),

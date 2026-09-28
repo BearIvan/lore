@@ -128,7 +128,7 @@ mod tests {
             .spawn(LORE_CONTEXT.scope(execution, async move {
                 let repository = test_repository(mutable).await;
                 let branch = branch_id();
-                let state = Arc::new(State::new());
+                let state = State::new();
                 let dir = add(
                     &state,
                     repository.clone(),
@@ -203,7 +203,7 @@ mod tests {
             .spawn(LORE_CONTEXT.scope(execution, async move {
                 let repository = test_repository(mutable).await;
                 let branch = branch_id();
-                let state = Arc::new(State::new());
+                let state = State::new();
 
                 let target_revision = Hash::from_u64(0xabcd);
                 let target_repository = Context::from(uuid::Uuid::now_v7());
@@ -276,7 +276,7 @@ mod tests {
             .spawn(LORE_CONTEXT.scope(execution, async move {
                 let repository = test_repository(mutable).await;
                 let branch = branch_id();
-                let state = Arc::new(State::new());
+                let state = State::new();
 
                 let count = BLOCK_NODE_COUNT * 3;
                 let mut last = ROOT_NODE;
@@ -350,7 +350,7 @@ mod tests {
                 let error = commit_in_memory_revision(
                     repository,
                     &token(),
-                    Arc::new(State::new()),
+                    State::new(),
                     Metadata::new(),
                     Hash::default(),
                     branch,
@@ -384,7 +384,7 @@ mod tests {
                 commit_in_memory_revision(
                     repository,
                     &token(),
-                    Arc::new(State::new()),
+                    State::new(),
                     metadata_on(branch),
                     Hash::default(),
                     branch,
@@ -404,7 +404,7 @@ mod tests {
             .spawn(LORE_CONTEXT.scope(execution, async move {
                 let repository = test_repository(mutable).await;
                 let branch = branch_id();
-                let state = Arc::new(State::new());
+                let state = State::new();
                 add(
                     &state,
                     repository.clone(),
@@ -457,7 +457,7 @@ mod tests {
             .spawn(LORE_CONTEXT.scope(execution, async move {
                 let repository = test_repository(mutable).await;
                 let branch = branch_id();
-                let state = Arc::new(State::new());
+                let state = State::new();
                 add(
                     &state,
                     repository.clone(),
@@ -534,7 +534,7 @@ mod tests {
             .spawn(LORE_CONTEXT.scope(execution, async move {
                 let repository = test_repository(mutable).await;
                 let branch = branch_id();
-                let state = Arc::new(State::new());
+                let state = State::new();
                 add(
                     &state,
                     repository.clone(),
@@ -604,7 +604,7 @@ mod tests {
             .spawn(LORE_CONTEXT.scope(execution, async move {
                 let repository = test_repository(mutable).await;
                 let branch = branch_id();
-                let state = Arc::new(State::new());
+                let state = State::new();
                 let node_id = add(
                     &state,
                     repository.clone(),
@@ -656,7 +656,7 @@ mod tests {
             .spawn(LORE_CONTEXT.scope(execution, async move {
                 let repository = test_repository(mutable).await;
                 let branch = branch_id();
-                let state = Arc::new(State::new());
+                let state = State::new();
                 let unhashed = Node {
                     address: Address::default(),
                     ..file("a.bin")
@@ -717,7 +717,7 @@ mod tests {
             .spawn(LORE_CONTEXT.scope(execution, async move {
                 let repository = test_repository(mutable).await;
                 let branch = branch_id();
-                let state = Arc::new(State::new());
+                let state = State::new();
                 add(
                     &state,
                     repository.clone(),
@@ -786,7 +786,7 @@ mod tests {
             .spawn(LORE_CONTEXT.scope(execution, async move {
                 let repository = test_repository(mutable).await;
                 let branch = branch_id();
-                let state = Arc::new(State::new());
+                let state = State::new();
                 add(
                     &state,
                     repository.clone(),
@@ -835,7 +835,7 @@ mod tests {
             .spawn(LORE_CONTEXT.scope(execution, async move {
                 let repository = test_repository(mutable).await;
                 let branch = branch_id();
-                let state = Arc::new(State::new());
+                let state = State::new();
                 add(
                     &state,
                     repository.clone(),
@@ -896,7 +896,7 @@ mod tests {
             .spawn(LORE_CONTEXT.scope(execution, async move {
                 let repository = test_repository(mutable).await;
                 let branch = branch_id();
-                let state = Arc::new(State::new());
+                let state = State::new();
                 add(
                     &state,
                     repository.clone(),
@@ -946,7 +946,7 @@ mod tests {
             .spawn(LORE_CONTEXT.scope(execution, async move {
                 let repository = test_repository(mutable).await;
                 let branch = branch_id();
-                let state = Arc::new(State::new());
+                let state = State::new();
                 add(
                     &state,
                     repository.clone(),
@@ -987,7 +987,7 @@ mod tests {
 
                 let error = resolve_commit_branch(
                     repository,
-                    Arc::new(State::new()),
+                    State::new(),
                     &Metadata::new(),
                     Hash::default(),
                 )
@@ -1016,7 +1016,7 @@ mod tests {
 
                 let error = resolve_commit_branch(
                     repository,
-                    Arc::new(State::new()),
+                    State::new(),
                     &Metadata::new(),
                     Hash::from_u64(0x99),
                 )
@@ -1043,7 +1043,7 @@ mod tests {
             .spawn(LORE_CONTEXT.scope(execution, async move {
                 let repository = test_repository(mutable).await;
                 let parent_branch = branch_id();
-                let state = Arc::new(State::new());
+                let state = State::new();
                 add(
                     &state,
                     repository.clone(),
@@ -1105,7 +1105,7 @@ mod tests {
             .spawn(LORE_CONTEXT.scope(execution, async move {
                 let repository = test_repository(mutable).await;
                 let parent_branch = branch_id();
-                let state = Arc::new(State::new());
+                let state = State::new();
                 add(
                     &state,
                     repository.clone(),
@@ -1185,7 +1185,7 @@ mod tests {
 
                 for conflicted in [file("node"), directory("node"), linked] {
                     let branch = branch_id();
-                    let state = Arc::new(State::new());
+                    let state = State::new();
                     let node_id =
                         add(&state, repository.clone(), ROOT_NODE, conflicted, "node").await;
                     state

@@ -705,7 +705,7 @@ mod tests {
         let mut parent = Hash::default();
         let mut signatures = Vec::with_capacity(count as usize);
         for number in 1..=count {
-            let state = Arc::new(State::new());
+            let state = State::new();
             state.set_parent_self(parent);
             state.set_revision_number(number);
             parent = state
@@ -725,7 +725,7 @@ mod tests {
         revision_number: u64,
     ) -> Arc<State> {
         let write_token = get_write_token();
-        let state = Arc::new(State::new());
+        let state = State::new();
         state.set_parent_self(parent);
         state.set_revision_number(revision_number);
         state
@@ -1331,7 +1331,7 @@ mod tests {
             let mut revisions = std::collections::BTreeMap::new();
             let mut parent = Hash::default();
             for number in 1..=linear_before {
-                let state = Arc::new(State::new());
+                let state = State::new();
                 state.set_parent_self(parent);
                 state.set_revision_number(number);
                 let mut metadata = lore_revision::metadata::Metadata::new();
@@ -1364,7 +1364,7 @@ mod tests {
 
             let other =
                 serialize_jump_revision(repository, Hash::default(), jump_other_number).await;
-            let state = Arc::new(State::new());
+            let state = State::new();
             state.set_parent_self(parent);
             state.set_parent_other(other.revision());
             let mut metadata = lore_revision::metadata::Metadata::new();

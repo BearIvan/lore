@@ -439,7 +439,7 @@ pub(crate) mod test_support {
             filter: Arc::default(),
             filesystem_provider: None,
         }));
-        let state = Arc::new(State::new());
+        let state = State::new();
         Arc::new(RevisionTreeInternal::new(
             store_internal,
             parent_storage_handle_id,

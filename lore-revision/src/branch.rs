@@ -4136,10 +4136,7 @@ mod tests {
         let token = repository
             .try_write_token()
             .expect("a null context carries a write token");
-        // Behind an `Arc`, as every other holder of a `State` has it: a bare one
-        // is held across the serialize await, which puts the whole of it in this
-        // future rather than a pointer to it.
-        let state = Arc::new(State::new());
+        let state = State::new();
         state.set_parent_self(parent);
         state.set_revision_number(revision_number);
         state
@@ -4160,7 +4157,7 @@ mod tests {
         let token = repository
             .try_write_token()
             .expect("a null context carries a write token");
-        let state = Arc::new(State::new());
+        let state = State::new();
         state.set_parent_self(parent);
         state.set_revision_number(revision_number);
         state.set_metadata_hash(revision(distinguisher));
@@ -4180,7 +4177,7 @@ mod tests {
         let token = repository
             .try_write_token()
             .expect("a null context carries a write token");
-        let state = Arc::new(State::new());
+        let state = State::new();
         state.set_parent_self(parent_self);
         state.set_parent_other(parent_other);
         state.set_revision_number(revision_number);
@@ -4911,7 +4908,7 @@ mod tests {
     async fn diff_change_carries_the_move_source_path() {
         Box::pin(with_execution(async {
             let repository = null_repository().await;
-            let state = Arc::new(State::new());
+            let state = State::new();
             let change = node_change(
                 &repository,
                 &state,
@@ -4935,7 +4932,7 @@ mod tests {
     async fn diff_change_without_a_move_reports_no_source_path() {
         Box::pin(with_execution(async {
             let repository = null_repository().await;
-            let state = Arc::new(State::new());
+            let state = State::new();
             let change = node_change(
                 &repository,
                 &state,
@@ -4959,7 +4956,7 @@ mod tests {
     async fn diff_change_marks_a_moved_directory_on_both_paths() {
         Box::pin(with_execution(async {
             let repository = null_repository().await;
-            let state = Arc::new(State::new());
+            let state = State::new();
             let change = node_change(
                 &repository,
                 &state,

@@ -1533,7 +1533,7 @@ pub mod tests {
                         .with_filter(Arc::new(filter)),
                 ));
                 let operation = repository.file_system().begin_operation().await.unwrap();
-                let state = Arc::new(State::new());
+                let state = State::new();
                 let tree = || FilesystemDiffTree {
                     repository: repository.clone(),
                     state: state.clone(),

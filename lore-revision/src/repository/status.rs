@@ -1924,7 +1924,7 @@ mod tree_diff_operation_tests {
 
         LORE_CONTEXT
             .scope(execution, async move {
-                let state = Arc::new(State::new());
+                let state = State::new();
                 report_tree_diffs(
                     &repository,
                     &[None],

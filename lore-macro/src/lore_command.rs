@@ -16,6 +16,7 @@ pub fn get_lore_command_impl(input: &DeriveInput) -> TokenStream {
     };
 
     let mut inside_match = quote! {};
+    let mut run_match = quote! {};
     let mut conversions = quote! {};
     for variant in variants.iter() {
         let ident = &variant.ident;
@@ -25,7 +26,17 @@ pub fn get_lore_command_impl(input: &DeriveInput) -> TokenStream {
         };
         inside_match = quote! {
             #inside_match
-            #name::#ident(args) => { crate::args::invoke_args(args, globals, callback).await }
+            #name::#ident(args) => {
+                let handler = ::core::pin::pin!(crate::args::InvokableLoreArgs::invoke_local(args, globals, callback));
+                handler.await
+            }
+        };
+        run_match = quote! {
+            #run_match
+            #name::#ident(_) => crate::args::run_handler(self, globals, callback, |command| match command {
+                #name::#ident(args) => args,
+                _ => unreachable!(),
+            }),
         };
         conversions = quote! {
             #conversions
@@ -39,9 +50,27 @@ pub fn get_lore_command_impl(input: &DeriveInput) -> TokenStream {
 
     quote! {
         impl #name {
+            /// Runs this command's handler as a future.
+            ///
+            /// Each arm pins the handler's future in a local that lives across the await, so the
+            /// future is built in place in this future's state. Awaited by value, it would pass
+            /// through two temporaries joined by a full copy. LLVM merges each such pair and drops
+            /// its lifetime markers, and the poll frame would then hold one for every command.
             pub async fn invoke_local(self, globals: crate::interface::LoreGlobalArgs, callback: crate::interface::LoreEventCallback) -> i32 {
                 match self {
                     #inside_match
+                }
+            }
+
+            /// Runs this command's handler to completion on the calling thread, which must be
+            /// outside the runtime.
+            ///
+            /// Each arm binds nothing and passes the whole command to `run_handler`, which moves the
+            /// arguments out, so in optimized builds this function's frame holds no command's
+            /// arguments.
+            pub(crate) fn run_local(self, globals: crate::interface::LoreGlobalArgs, callback: crate::interface::LoreEventCallback) -> i32 {
+                match self {
+                    #run_match
                 }
             }
         }

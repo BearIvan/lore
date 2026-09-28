@@ -3,6 +3,7 @@
 use std::fmt::Display;
 use std::fmt::Formatter;
 use std::io::Write;
+use std::pin::pin;
 
 use lore_error_set::prelude::*;
 use thiserror::Error;
@@ -115,16 +116,15 @@ impl IpcConnection {
             // (including Error and Log) to the remote client so the client's own
             // wrapped callback can handle them. Wrapping here would swallow those
             // events on the server side and they would never reach the remote.
-            let cli_result = command
-                .invoke(Some(Box::new(move |event: &LoreEvent| {
-                    if let Err(error) = to_client_sender.send((
-                        MessageToClient::Event(event.clone()),
-                        header.serialization_type,
-                    )) {
-                        eprintln!("Failed to send Event message to connection task: {error}");
-                    }
-                })))
-                .await;
+            let handler = pin!(command.invoke(Some(Box::new(move |event: &LoreEvent| {
+                if let Err(error) = to_client_sender.send((
+                    MessageToClient::Event(event.clone()),
+                    header.serialization_type,
+                )) {
+                    eprintln!("Failed to send Event message to connection task: {error}");
+                }
+            }))));
+            let cli_result = handler.await;
 
             if let Err(error) = sender.send((
                 MessageToClient::ApiResult(cli_result),

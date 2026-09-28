@@ -234,7 +234,7 @@ mod tests {
             mutable_store,
         )));
         let side = NodeChangeState {
-            mapping: NodeMapping::root(repository, Arc::new(State::new())),
+            mapping: NodeMapping::root(repository, State::new()),
             observed: None,
             flags: NodeFlags::NoFlags,
             address: Address::default(),
