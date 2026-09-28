@@ -2508,6 +2508,7 @@ mod block_single_flight {
     use crate::tests::TempDir;
     use crate::tests::default_repository_creation_args;
     use crate::tests::generate_tempdir;
+    use crate::tests::setup_test_execution;
     use crate::tests::test_store_create;
 
     /// Tasks per burst. Large enough that a store read per task is unmistakable
@@ -2518,6 +2519,10 @@ mod block_single_flight {
     /// inside this window, so a state that does not gate its block reads does
     /// them all, rather than losing a race it would usually win by accident.
     const READ_DELAY: Duration = Duration::from_millis(50);
+
+    /// The most a block lookup's future may hold: the resident check and the box its load is in.
+    /// A load held inline takes kilobytes.
+    const LOOKUP_FUTURE_BUDGET: usize = 256;
 
     /// Counts the payload reads reaching the store underneath, per address, and
     /// paces them.
@@ -2899,5 +2904,36 @@ mod block_single_flight {
             }))
             .await
             .expect("Test task failed");
+    }
+
+    /// Every future awaiting a lookup holds the lookup's future, whether or not the lookup loads,
+    /// so the load stays in a box of its own.
+    #[tokio::test]
+    async fn block_lookups_keep_their_load_out_of_their_future() {
+        LORE_CONTEXT
+            .scope(setup_test_execution(), async {
+                let (immutable_store, mutable_store, _execution) =
+                    test_store_create().await.expect("Failed to create stores");
+                let repository = Arc::new(RepositoryContext::new_null_context(
+                    immutable_store,
+                    mutable_store,
+                ));
+                let state = State::new();
+
+                let node_block = state.block(repository.clone(), 0);
+                let metadata_block = state.block_file_metadata(repository, 0);
+
+                assert!(
+                    size_of_val(&node_block) <= LOOKUP_FUTURE_BUDGET,
+                    "a node block lookup holds {} bytes",
+                    size_of_val(&node_block)
+                );
+                assert!(
+                    size_of_val(&metadata_block) <= LOOKUP_FUTURE_BUDGET,
+                    "a file metadata block lookup holds {} bytes",
+                    size_of_val(&metadata_block)
+                );
+            })
+            .await;
     }
 }

@@ -1701,6 +1701,10 @@ impl State {
             .map(Some)
     }
 
+    /// The file-metadata block for `block_index`, loaded unless it is resident.
+    ///
+    /// Only the load is boxed, as in [`Self::block`]. Inline, it would make every future awaiting
+    /// a lookup as large as the load's, whether or not that lookup loads.
     pub async fn block_file_metadata(
         &self,
         repository: Arc<RepositoryContext>,
@@ -1715,6 +1719,15 @@ impl State {
             }
         }
 
+        Box::pin(self.block_file_metadata_load(repository, block_index)).await
+    }
+
+    /// [`Self::block_file_metadata`] for a block that was not resident when asked for.
+    async fn block_file_metadata_load(
+        &self,
+        repository: Arc<RepositoryContext>,
+        block_index: usize,
+    ) -> Result<Arc<NodeFileMetadataBlock>, StateError> {
         let tree = self.tree(repository.clone()).await?;
         if block_index >= tree.block_count as usize {
             return Err(StateError::internal(format!(
