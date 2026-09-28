@@ -5518,6 +5518,11 @@ async fn emit_change(
 
 /// `states` is the filter's verdict for `path`, which the hierarchy walk below
 /// steps its children from rather than folding each whole path.
+///
+/// Only a directory added or deleted as a whole is walked: a caller emitting a
+/// modification walks the directory itself. The walk is boxed, one allocation per
+/// such directory: inline, it would make this future and every future above it
+/// larger.
 #[allow(clippy::too_many_arguments)]
 async fn add_change(
     from: NodeChangeState,
@@ -5570,19 +5575,23 @@ async fn add_change(
         })
         .await?;
 
-        if recursion_node.is_file() {
+        if !recursion_node.is_directory() {
             return Ok(());
         }
     }
 
-    if action == change::FileAction::Keep {
-        // Recursion happens in caller for modifications and stages
+    if !matches!(action, FileAction::Add | FileAction::Delete) {
         return Ok(());
     }
 
-    Box::pin(
-        async move { add_change_hierarchy(from, to, action, changes, filter_mode, states).await },
-    )
+    Box::pin(add_change_hierarchy(
+        from,
+        to,
+        action,
+        changes,
+        filter_mode,
+        states,
+    ))
     .await
 }
 
@@ -8391,7 +8400,10 @@ mod tests {
         }
     }
 
+    use lore_base::runtime::LORE_CONTEXT;
+
     use super::*;
+    use crate::fs::filesystem_provider::tests::setup_test_execution;
 
     /// The key every stored modification time is filed under. It has to stay the
     /// digest over the path's own lowercase form, or a scan finds nothing it wrote
@@ -9965,6 +9977,198 @@ mod tests {
             "loading a block allocated no permits"
         );
     }
+
+    /// The changes a diff from `from` to `to` emits, as each one's action and path, in the order
+    /// it emits them. The diff runs in an execution context, which the events it sends need.
+    async fn diff_in_order(
+        repository: Arc<RepositoryContext>,
+        from: Arc<State>,
+        to: Arc<State>,
+    ) -> Vec<(FileAction, String)> {
+        let walk = async move {
+            ChangeStream::spawn(async move |changes| {
+                diff(
+                    repository.clone(),
+                    from,
+                    repository,
+                    to,
+                    None,
+                    None,
+                    &changes,
+                    FilterMode::Full,
+                )
+                .await
+            })
+            .collect()
+            .await
+        };
+        LORE_CONTEXT
+            .scope(setup_test_execution(), walk)
+            .await
+            .expect("diffing the trees")
+            .iter()
+            .map(|change| {
+                let path = change.resolved_side().mapping.path.as_str().to_string();
+                (change.action, path)
+            })
+            .collect()
+    }
+
+    /// A directory added or deleted as a whole is emitted depth first along each sibling chain,
+    /// and a link below it is emitted without what it holds.
+    ///
+    /// Adding a node prepends it, so each level's chain is the reverse of the order its children
+    /// are added in here.
+    #[tokio::test]
+    async fn a_hierarchy_is_emitted_depth_first_along_each_sibling_chain() {
+        let repository = null_repository().await;
+        let empty = State::new();
+        let tree = State::new();
+        let directory = NodeFlags::NoFlags;
+
+        let top = add_dirty_node(&tree, repository.clone(), ROOT_NODE, "top", directory).await;
+        let mount = add_dirty_node(&tree, repository.clone(), top, "mount", NodeFlags::Link).await;
+        add_dirty_node(
+            &tree,
+            repository.clone(),
+            mount,
+            "held.txt",
+            NodeFlags::File,
+        )
+        .await;
+        add_dirty_node(&tree, repository.clone(), top, "empty", directory).await;
+        add_dirty_node(
+            &tree,
+            repository.clone(),
+            top,
+            "middle.txt",
+            NodeFlags::File,
+        )
+        .await;
+        let first = add_dirty_node(&tree, repository.clone(), top, "first", directory).await;
+        let inner = add_dirty_node(&tree, repository.clone(), first, "inner", directory).await;
+        add_dirty_node(&tree, repository.clone(), inner, "two.txt", NodeFlags::File).await;
+        add_dirty_node(&tree, repository.clone(), first, "one.txt", NodeFlags::File).await;
+
+        let order = [
+            "top",
+            "top/first",
+            "top/first/one.txt",
+            "top/first/inner",
+            "top/first/inner/two.txt",
+            "top/middle.txt",
+            "top/empty",
+            "top/mount",
+        ];
+        for (action, from, to) in [
+            (FileAction::Add, empty.clone(), tree.clone()),
+            (FileAction::Delete, tree, empty),
+        ] {
+            let expected: Vec<_> = order
+                .iter()
+                .map(|path| (action, path.to_string()))
+                .collect();
+            assert_eq!(
+                diff_in_order(repository.clone(), from, to).await,
+                expected,
+                "a {action:?} emits each directory before what it holds, and nothing a link holds"
+            );
+        }
+    }
+
+    /// A child the filter excludes, and a directory with an empty name, leave the walk's path as
+    /// their parent's, so the siblings after them are named under it. The unnamed directory is
+    /// named as its parent, which it appends nothing to.
+    #[tokio::test]
+    async fn siblings_after_an_excluded_or_unnamed_child_are_named_under_their_parent() {
+        let repository = null_repository_excluding(&["skipped"]).await;
+        let tree = State::new();
+        let directory = NodeFlags::NoFlags;
+
+        let top = add_dirty_node(&tree, repository.clone(), ROOT_NODE, "top", directory).await;
+        add_dirty_node(&tree, repository.clone(), top, "last.txt", NodeFlags::File).await;
+        let unnamed = add_dirty_node(&tree, repository.clone(), top, "", directory).await;
+        add_dirty_node(
+            &tree,
+            repository.clone(),
+            unnamed,
+            "inner.txt",
+            NodeFlags::File,
+        )
+        .await;
+        add_dirty_node(
+            &tree,
+            repository.clone(),
+            top,
+            "middle.txt",
+            NodeFlags::File,
+        )
+        .await;
+        let skipped = add_dirty_node(&tree, repository.clone(), top, "skipped", directory).await;
+        add_dirty_node(
+            &tree,
+            repository.clone(),
+            skipped,
+            "hidden.txt",
+            NodeFlags::File,
+        )
+        .await;
+
+        let expected: Vec<_> = [
+            "top",
+            "top/middle.txt",
+            "top",
+            "top/inner.txt",
+            "top/last.txt",
+        ]
+        .iter()
+        .map(|path| (FileAction::Add, path.to_string()))
+        .collect();
+        assert_eq!(
+            diff_in_order(repository, State::new(), tree).await,
+            expected,
+            "nothing under the excluded directory is emitted, and every sibling keeps the prefix"
+        );
+    }
+
+    /// Descent costs a stack entry, not a frame, so a hierarchy a thousand levels deep is emitted
+    /// whole, in the stack a shallow one takes.
+    #[tokio::test]
+    async fn a_deeply_nested_hierarchy_is_emitted_in_full() {
+        const DEPTH: usize = 1024;
+
+        let repository = null_repository().await;
+        let tree = State::new();
+
+        let mut parent = ROOT_NODE;
+        let mut path = RelativePath::new();
+        let mut expected = Vec::with_capacity(DEPTH + 1);
+        for level in 0..DEPTH {
+            let name = format!("d{level}");
+            parent =
+                add_dirty_node(&tree, repository.clone(), parent, &name, NodeFlags::NoFlags).await;
+            path = path.push_into_buf(&name).freeze();
+            expected.push((FileAction::Add, path.as_str().to_string()));
+        }
+        add_dirty_node(
+            &tree,
+            repository.clone(),
+            parent,
+            "leaf.txt",
+            NodeFlags::File,
+        )
+        .await;
+        expected.push((
+            FileAction::Add,
+            path.push_into_buf("leaf.txt").freeze().as_str().to_string(),
+        ));
+
+        assert_eq!(
+            diff_in_order(repository, State::new(), tree).await,
+            expected,
+            "every one of the {DEPTH} levels is emitted, and the leaf below them"
+        );
+    }
 }
 
 /// Discards every node below `parent_node_id`, whose child chain starts at
@@ -10058,23 +10262,146 @@ async fn load_node_for_change(
     }
 }
 
-/// Dispatch hierarchy traversal to the appropriate handler based on action.
-async fn add_change_hierarchy(
+/// A directory the hierarchy walk has entered: the children it has yet to emit, whether its name is
+/// on the walk's path buffer, and the filter's verdict for the directory, which each child steps
+/// from.
+///
+/// `appended` is false for the walk's top directory, whose path the buffer starts as, and for a
+/// directory with an empty name, which appends nothing and so must take nothing off.
+struct HierarchyLevel {
+    children: StateNodeChildrenWithNameIterator,
+    appended: bool,
+    states: FilterStates,
+}
+
+impl HierarchyLevel {
+    /// The level walking the children of `node`, in the tree `side` names.
+    async fn open(
+        side: &NodeChangeState,
+        node: NodeID,
+        appended: bool,
+        states: FilterStates,
+    ) -> Result<Self, StateError> {
+        let children = StateNodeChildrenWithNameIterator::new(
+            side.mapping.state.clone(),
+            side.mapping.repository.clone(),
+            node,
+        )
+        .await?;
+        Ok(Self {
+            children,
+            appended,
+            states,
+        })
+    }
+}
+
+/// Emits a change for every node under a directory added or deleted as a whole.
+///
+/// A delete enumerates the side [`delete_hierarchy_side`] answers with, and emits nothing, with a
+/// warning, where that node cannot be read; an add enumerates `to`, and fails where it cannot be
+/// read. Neither descends a file or a link: a link's children are another repository's, and its
+/// mount path stands for them. `states` is the filter's verdict for the directory, which each child
+/// steps from.
+///
+/// Descent is an explicit stack of [`HierarchyLevel`] rather than a box per node, so the walk runs
+/// at a fixed call depth. Changes are emitted depth first in sibling order: a directory's change
+/// precedes its level, and its next sibling follows once that level is done.
+///
+/// Children are named on one path buffer, which holds the path of the directory being walked and
+/// keeps [`RelativePath::COMPONENT_ROOM`] free beyond it. A child's name is a read lock on its node
+/// block, released as the name is pushed, so the lock covers copying the name into that room; only
+/// a longer name grows the buffer under it. The child's own path is allocated from the buffer after
+/// that, and only for a child the filter keeps. A name is taken off as soon as its child is done
+/// with, or for a directory once its level is done.
+///
+/// Not an `async fn`, which would hold `from` and `to` beside the sides taken from them.
+fn add_change_hierarchy(
     from: NodeChangeState,
     to: NodeChangeState,
     action: change::FileAction,
     changes: &ChangeSender,
     filter_mode: FilterMode,
     states: FilterStates,
-) -> Result<(), StateError> {
-    match action {
-        FileAction::Delete => {
-            add_hierarchy_delete(from, to, changes, filter_mode, states).await?;
+) -> impl Future<Output = Result<(), StateError>> + Send + '_ {
+    let sides = match action {
+        FileAction::Delete => delete_hierarchy_side(from, &to).map(|side| (side, to)),
+        FileAction::Add => Some((to, from)),
+        _ => None,
+    };
+    async move {
+        let Some((side, other)) = &sides else {
+            return Ok(());
+        };
+        if !side.mapping.node.is_valid_or_root_node_id() {
+            return Ok(());
         }
-        FileAction::Add => add_hierarchy_add(from, to, changes, filter_mode, states).await?,
-        _ => {} // Keep/Copy/Move don't recurse here
+        match side.get_node().await {
+            Ok(node) if !node.is_directory() => return Ok(()),
+            Ok(_) => {}
+            Err(err) if action == FileAction::Delete => {
+                lore_warn!(
+                    "Skipping deletes below {}: node {} could not be read: {err}",
+                    side.mapping.path,
+                    side.mapping.node
+                );
+                return Ok(());
+            }
+            Err(err) => return Err(err),
+        }
+
+        let mut path = side
+            .mapping
+            .path
+            .to_buf_with_capacity(RelativePath::COMPONENT_ROOM);
+        let mut levels = vec![HierarchyLevel::open(side, side.mapping.node, false, states).await?];
+        while let Some(level) = levels.last_mut() {
+            let Some((child_id, child_node, child_name)) = level.children.next().await? else {
+                if levels.pop().is_some_and(|done| done.appended) {
+                    path.pop();
+                }
+                continue;
+            };
+            let appended = !child_name.is_empty();
+            path.push(child_name);
+            let (child_states, excluded) = side.mapping.repository.filter.child_emit_excludes(
+                level.states,
+                &path,
+                child_node.is_directory(),
+                filter_mode,
+            );
+
+            if !excluded {
+                let child_path = path.clone().freeze();
+                emit(changes, || {
+                    let absent = other.invalid(child_path.clone());
+                    let child = side.from_child(child_id, &child_node, child_path);
+                    let (from, to) = match action {
+                        FileAction::Delete => (child, absent),
+                        _ => (absent, child),
+                    };
+                    NodeChange {
+                        action,
+                        flags: compute_change_flags(&child_node),
+                        from,
+                        to,
+                    }
+                })
+                .await?;
+            }
+
+            // TODO(UCS-11623): Check if the target link repository has no local changes - if so,
+            // do not iterate and show each link file as added. Otherwise, recurse in and compare
+            // against file system and/or staged state in link
+            if !excluded && child_node.is_directory() {
+                levels.push(HierarchyLevel::open(side, child_id, appended, child_states).await?);
+                path.reserve(1 + RelativePath::COMPONENT_ROOM);
+            } else if appended {
+                path.pop();
+            }
+        }
+        Ok(())
     }
-    Ok(())
 }
 
 fn node_discard_recurse<F>(
@@ -10117,153 +10444,4 @@ fn delete_hierarchy_side(from: NodeChangeState, to: &NodeChangeState) -> Option<
     } else {
         None
     }
-}
-
-/// Recursively add delete changes for an entire directory hierarchy.
-///
-/// `states` is the filter's verdict for the path being walked, which each child steps from. It
-/// belongs to the filter [`delete_hierarchy_side`] answers with.
-async fn add_hierarchy_delete(
-    from: NodeChangeState,
-    to: NodeChangeState,
-    changes: &ChangeSender,
-    filter_mode: FilterMode,
-    states: FilterStates,
-) -> Result<(), StateError> {
-    let Some(iteration_state) = delete_hierarchy_side(from, &to) else {
-        return Ok(());
-    };
-
-    let node = match iteration_state
-        .mapping
-        .state
-        .node(
-            iteration_state.mapping.repository.clone(),
-            iteration_state.mapping.node,
-        )
-        .await
-    {
-        Ok(node) => node,
-        Err(err) => {
-            lore_warn!(
-                "Skipping deletes below {}: node {} could not be read: {err}",
-                iteration_state.mapping.path,
-                iteration_state.mapping.node
-            );
-            return Ok(());
-        }
-    };
-
-    // A link holds children a delete does not name: the mount path stands for them
-    if node.is_file() || node.is_link() {
-        return Ok(());
-    }
-
-    let mut children = StateNodeChildrenWithNameIterator::new(
-        iteration_state.mapping.state.clone(),
-        iteration_state.mapping.repository.clone(),
-        iteration_state.mapping.node,
-    )
-    .await?;
-
-    while let Some((child_id, child_node, child_name)) = children.next().await? {
-        let child_path = iteration_state
-            .mapping
-            .path
-            .push_into_buf(child_name)
-            .freeze();
-
-        let (child_states, excluded) = iteration_state
-            .mapping
-            .repository
-            .filter
-            .child_emit_excludes(states, &child_path, child_node.is_directory(), filter_mode);
-        if excluded {
-            continue;
-        }
-
-        let child_from = iteration_state.from_child(child_id, &child_node, child_path.clone());
-
-        Box::pin(add_change(
-            child_from,
-            to.invalid(child_path),
-            FileAction::Delete,
-            change::Flags::None,
-            changes,
-            filter_mode,
-            child_states,
-        ))
-        .await?;
-    }
-    Ok(())
-}
-
-/// Recursively add add changes for an entire directory hierarchy.
-///
-/// `states` is the filter's verdict for the path being walked, which each child steps from.
-async fn add_hierarchy_add(
-    from: NodeChangeState,
-    to: NodeChangeState,
-    changes: &ChangeSender,
-    filter_mode: FilterMode,
-    states: FilterStates,
-) -> Result<(), StateError> {
-    // Check early exit conditions
-    let to_node = if to.mapping.node.is_valid_or_root_node_id() {
-        to.mapping
-            .state
-            .node(to.mapping.repository.clone(), to.mapping.node)
-            .await
-            .ok()
-    } else {
-        None
-    };
-
-    // File nodes end recursion
-    if to_node.map(|n| n.is_file()).unwrap_or_default() {
-        return Ok(());
-    }
-
-    // Link nodes don't recurse
-    // TODO(UCS-11623): Check if the target link repository has no local changes - if so, do not
-    // iterate and show each link file as added. Otherwise, recurse in and compare against file
-    // system and/or staged state in link
-    if to_node.map(|n| n.is_link()).unwrap_or_default() {
-        return Ok(());
-    }
-
-    let mut children = StateNodeChildrenWithNameIterator::new(
-        to.mapping.state.clone(),
-        to.mapping.repository.clone(),
-        to.mapping.node,
-    )
-    .await?;
-
-    while let Some((child_id, child_node, child_name)) = children.next().await? {
-        let child_path = to.mapping.path.push_into_buf(child_name).freeze();
-
-        // Skip excluded paths
-        let (child_states, excluded) = to.mapping.repository.filter.child_emit_excludes(
-            states,
-            &child_path,
-            child_node.is_directory(),
-            filter_mode,
-        );
-        if excluded {
-            continue;
-        }
-
-        let child_to = to.from_child(child_id, &child_node, child_path.clone());
-        Box::pin(add_change(
-            from.invalid(child_path),
-            child_to,
-            FileAction::Add,
-            change::Flags::None,
-            changes,
-            filter_mode,
-            child_states,
-        ))
-        .await?;
-    }
-    Ok(())
 }

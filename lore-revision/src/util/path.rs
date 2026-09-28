@@ -1193,6 +1193,13 @@ impl RelativePathBuf {
         self
     }
 
+    /// Room for `additional` more bytes in each of the two strings, so a push that short does not
+    /// grow them.
+    pub fn reserve(&mut self, additional: usize) {
+        self.path.reserve(additional);
+        self.path_lower.reserve(additional);
+    }
+
     /// Reset both `path` and `path_lower` to empty.
     pub fn clear(&mut self) {
         self.path.clear();

@@ -511,7 +511,7 @@ async fn record_observed_size(
 
 /// Emit a single Add change for `node_id` without recursing into its subtree —
 /// the caller's walk recursion surfaces the children. Used to report a dirty-add
-/// directory exactly once per scan (unlike `add_change`, which recurses the whole
+/// directory exactly once per scan (unlike `add_change`, which walks the whole
 /// hierarchy for a directory add and would double-count against the recursion).
 async fn emit_dirty_add_node_single(
     repository: Arc<RepositoryContext>,
