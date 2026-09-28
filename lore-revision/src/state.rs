@@ -7853,6 +7853,11 @@ pub async fn collect_new_fragments(
     Ok(fragments)
 }
 
+/// The file content under `node_to` in `state_to` that `node_from` in `state_from` does not hold at
+/// the same path.
+///
+/// Both child lists are sorted by name hash, so each child of `node_to` is paired with the child of
+/// `node_from` carrying its name in one pass over the two, the pairing [`diff()`] makes.
 async fn collect_new_file_fragments(
     repository: Arc<RepositoryContext>,
     state_from: Arc<State>,
@@ -7875,11 +7880,14 @@ async fn collect_new_file_fragments(
             false, /* No links, pushed separately */
         )
     );
-    let from = from?;
-    let to = to?;
+    let mut from = from?;
+    let mut to = to?;
+    named_node_sort(&mut from.children);
+    named_node_sort(&mut to.children);
 
     let mut tasks = JoinSet::new();
     let mut failure = None;
+    let mut from_index = 0;
     for to_named_node in to.children {
         let to_node_id = to_named_node.node;
         let to_node = to.state.node(to.repository.clone(), to_node_id).await;
@@ -7887,20 +7895,25 @@ async fn collect_new_file_fragments(
             failure = failure.or(to_node.err());
             break;
         };
+
+        while from_index < from.children.len()
+            && from.children[from_index].name < to_named_node.name
+        {
+            from_index += 1;
+        }
+
         let mut from_node_id = INVALID_NODE;
         let mut modified = false;
-        for from_named_node in from.children.iter() {
-            if from_named_node.name == to_named_node.name {
-                let from_node = from
-                    .state
-                    .node(from.repository.clone(), from_named_node.node)
-                    .await?;
-                from_node_id = from_named_node.node;
-                if to_node.address != from_node.address {
-                    modified = true;
-                }
-                break;
-            }
+        if let Some(from_named_node) = from.children.get(from_index)
+            && from_named_node.name == to_named_node.name
+        {
+            from_index += 1;
+            let from_node = from
+                .state
+                .node(from.repository.clone(), from_named_node.node)
+                .await?;
+            from_node_id = from_named_node.node;
+            modified = to_node.address != from_node.address;
         }
 
         if !from_node_id.is_valid_node_id() || modified {

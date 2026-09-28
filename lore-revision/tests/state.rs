@@ -12,6 +12,7 @@ mod tests {
     use lore_base::types::Address;
     use lore_base::types::CloneHeapAlloc;
     use lore_base::types::Context;
+    use lore_base::types::Hash;
     use lore_base::types::ZeroHeapAlloc;
     use lore_revision::lore::RepositoryId;
     use lore_revision::metadata::Metadata;
@@ -478,6 +479,121 @@ mod tests {
                     fragments.contains(&payload),
                     "The payload the revision metadata names was not collected"
                 );
+            }))
+            .await
+            .expect("Test task failed");
+    }
+
+    fn file_content(hash: u64) -> Address {
+        Address {
+            hash: Hash::from_u64(hash),
+            context: Context::default(),
+        }
+    }
+
+    fn file_node(name: &str, content: Address) -> Node {
+        Node {
+            flags: NodeFlags::File.bits(),
+            mode: 0o644,
+            size: 10,
+            address: content,
+            name_hash: hash_string(name),
+            ..Default::default()
+        }
+    }
+
+    /// Each file of the new revision is paired with the file of the same name in the old one,
+    /// whatever order the two sibling chains hold them in, so only content the old revision
+    /// does not name at that path is collected.
+    ///
+    /// No content is in the store, so an unpaired file would be collected. That is what makes
+    /// the absence of every unchanged file's content a check of the pairing.
+    #[tokio::test]
+    async fn collect_new_fragments_pairs_files_by_name() {
+        let (immutable_store, mutable_store, execution) =
+            test_store_create().await.expect("Failed to create stores");
+        let repository_id = RepositoryId::from(uuid::Uuid::now_v7());
+
+        #[allow(clippy::disallowed_methods)]
+        runtime()
+            .spawn(LORE_CONTEXT.scope(execution.clone(), async move {
+                let fixture =
+                    test_repository_create(immutable_store, mutable_store, repository_id).await;
+                let repository = fixture.repository.clone();
+                let write_token = &fixture.write_token;
+
+                const FILE_COUNT: u64 = 64;
+                let state_from = State::new();
+                let mut file_ids = vec![];
+                for index in 0..FILE_COUNT {
+                    let name = format!("file-{index:03}");
+                    let file_id = state_from
+                        .node_add(
+                            repository.clone(),
+                            ROOT_NODE,
+                            file_node(&name, file_content(1000 + index)),
+                            &name,
+                        )
+                        .await
+                        .expect("Failed to add a file");
+                    file_ids.push(file_id);
+                }
+                let signature_from = state_from
+                    .serialize(repository.clone(), write_token)
+                    .await
+                    .expect("Failed to serialize from state");
+
+                let state_to = State::deserialize(repository.clone(), signature_from)
+                    .await
+                    .expect("Failed to deserialize state");
+                state_to
+                    .node_modify(repository.clone(), file_ids[10], 0o644, 10, file_content(2000))
+                    .await
+                    .expect("Failed to modify a file");
+                state_to
+                    .node_delete(repository.clone(), file_ids[20])
+                    .await
+                    .expect("Failed to delete a file");
+                for (name, content) in [("added-a", 3000), ("added-b", 3001)] {
+                    state_to
+                        .node_add(
+                            repository.clone(),
+                            ROOT_NODE,
+                            file_node(name, file_content(content)),
+                            name,
+                        )
+                        .await
+                        .expect("Failed to add a file");
+                }
+                let signature_to = state_to
+                    .serialize(repository.clone(), write_token)
+                    .await
+                    .expect("Failed to serialize to state");
+                let state_to = State::deserialize(repository.clone(), signature_to)
+                    .await
+                    .expect("Failed to deserialize state");
+
+                let fragments = collect_new_fragments(
+                    repository.clone(),
+                    state_from.clone(),
+                    state_to.clone(),
+                    true,
+                )
+                .await
+                .expect("Failed to collect fragments");
+
+                for content in [2000, 3000, 3001] {
+                    assert!(
+                        fragments.contains(&file_content(content)),
+                        "Content {content} of a modified or added file was not collected"
+                    );
+                }
+                for index in 0..FILE_COUNT {
+                    assert!(
+                        !fragments.contains(&file_content(1000 + index)),
+                        "Content of file-{index:03} was collected, which the old revision already names"
+                    );
+                }
             }))
             .await
             .expect("Test task failed");
