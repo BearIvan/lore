@@ -286,6 +286,66 @@ def test_file_reset_view(new_lore_repo, scratch_dir):
 
 
 @pytest.mark.smoke
+def test_file_reset_last_merged_side(new_lore_repo):
+    """`file reset --last-merged-from` restores the merge revision, and `--mine` and
+    `--theirs` restore the sides the merge was made from."""
+    repo: Lore = new_lore_repo("FileResetLastMergedSide")
+
+    conflict_file = "conflict.txt"
+
+    repo.write_commit_push("Base commit", {conflict_file: ["base\n"]}, offline=True)
+
+    repo.branch_create("feature", offline=True)
+    repo.write_commit_push(
+        "Modified on feature", {conflict_file: ["feature\n"]}, offline=True
+    )
+
+    repo.branch_switch("main", offline=True)
+    repo.write_commit_push("Modified on main", {conflict_file: ["main\n"]}, offline=True)
+
+    repo.branch_switch("feature", offline=True)
+
+    merge_output = repo.branch_merge("main", offline=True)
+    assert "conflicted" in merge_output, (
+        f"Merging main into feature should conflict, got:\n{merge_output}"
+    )
+
+    # Resolve by hand with content matching neither side, so the bytes on disk say
+    # which of the three versions a reset restored.
+    with repo.open_file(conflict_file, "w+") as output_file:
+        output_file.writelines(["resolved\n"])
+    repo.branch_merge_resolve(conflict_file, offline=True)
+    repo.commit("Merge main into feature", offline=True)
+
+    def reset_and_read(mine: bool = False, theirs: bool = False) -> list[str]:
+        repo.file_reset(
+            conflict_file,
+            last_merged_from="main",
+            mine=mine,
+            theirs=theirs,
+            offline=True,
+        )
+        with repo.open_file(conflict_file, "r") as input_file:
+            return input_file.readlines()
+
+    assert reset_and_read() == ["resolved\n"], (
+        "Reset to last merged should restore the merge revision"
+    )
+    assert reset_and_read(mine=True) == ["feature\n"], (
+        "Reset to last merged with --mine should restore the feature side of the merge"
+    )
+    assert reset_and_read(theirs=True) == ["main\n"], (
+        "Reset to last merged with --theirs should restore the main side of the merge"
+    )
+
+    # Either side names a side of a merge, so neither means anything on its own.
+    output = repo.file_reset(conflict_file, theirs=True, offline=True, check=False)
+    assert "last-merged-from" in output, (
+        f"--theirs without --last-merged-from should be rejected, got:\n{output}"
+    )
+
+
+@pytest.mark.smoke
 def test_file_write_address_inside_and_outside_repository(new_lore_repo, scratch_dir):
     """`file write --address` puts the content an address names at a destination the working
     tree holds, through the tree, and at one outside the repository, through the host

@@ -4461,6 +4461,8 @@ typedef struct lore_file_reset_to_last_merged_args_t {
   struct lore_string_t branch;
   // Purge untracked files
   uint8_t purge;
+  // Merge side to restore, 0 = resolved (the merge revision), 1 = self ("mine"), 2 = other ("theirs")
+  uint32_t merge_side;
 } lore_file_reset_to_last_merged_args_t;
 
 // Arguments for staging one or more files for the next commit.

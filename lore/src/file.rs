@@ -13,6 +13,7 @@ use lore_revision::file::hash::HashError;
 use lore_revision::file::history::HistoryOptions;
 use lore_revision::file::info::InfoOptions;
 use lore_revision::file::obliterate::ObliterateError;
+use lore_revision::file::reset::ResetMergeSide;
 use lore_revision::file::reset::ResetOptions;
 use lore_revision::file::unstage::UnstageOptions;
 use lore_revision::file::write::WriteAddressOptions;
@@ -940,6 +941,9 @@ pub struct LoreFileResetToLastMergedArgs {
     pub branch: LoreString,
     /// Purge untracked files
     pub purge: u8,
+    /// Merge side to restore, 0 = resolved (the merge revision), 1 = self ("mine"), 2 = other ("theirs")
+    #[serde(default)]
+    pub merge_side: u32,
 }
 
 /// Resets files to the state they were in at the last merged revision on a branch.
@@ -991,7 +995,13 @@ async fn reset_to_last_merged_local(
                 single_node: false,
             };
 
-            file::reset::reset_to_last_merged(repository, args.paths, args.branch, options)
+            file::reset::reset_to_last_merged(
+                repository,
+                args.paths,
+                args.branch,
+                ResetMergeSide::from_u32(args.merge_side),
+                options,
+            )
         },
     )
     .await
@@ -1371,4 +1381,22 @@ async fn history_local(
         file::history::history(repository, path, options)
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reset_to_last_merged_args_old_payload_missing_merge_side_uses_default() {
+        // Old IPC client payload with no merge_side field. The new field must be
+        // `#[serde(default)]` so old clients keep working.
+        let payload = r#"{ "paths": [], "branch": "main", "purge": 0 }"#;
+
+        let args: LoreFileResetToLastMergedArgs =
+            serde_json::from_str(payload).expect("old payload must deserialise");
+
+        assert_eq!(args.branch.as_str(), "main");
+        assert_eq!(args.merge_side, 0);
+    }
 }

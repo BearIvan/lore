@@ -373,6 +373,16 @@ pub struct FileResetArgs {
     /// merge has been performed.
     #[clap(long, value_name = "branch")]
     last_merged_from: Option<String>,
+
+    /// Reset to the version this branch held going into that merge rather
+    /// than the version the conflict was resolved with.
+    #[clap(long, action, requires = "last_merged_from", conflicts_with = "theirs")]
+    mine: bool,
+
+    /// Reset to the version the merged branch brought in rather than the
+    /// version the conflict was resolved with.
+    #[clap(long, action, requires = "last_merged_from")]
+    theirs: bool,
 }
 
 #[derive(Args)]
@@ -1339,6 +1349,12 @@ pub fn handle_file_reset(globals: LoreGlobalArgs, args: &FileResetArgs) -> u8 {
             paths,
             purge: args.purge.into(),
             branch: branch.into(),
+            // 0 = resolved, 1 = self ("mine"), 2 = other ("theirs")
+            merge_side: match (args.mine, args.theirs) {
+                (true, _) => 1,
+                (_, true) => 2,
+                _ => 0,
+            },
         };
 
         return run_command(globals, reset_last_merged_args.into(), callback) as u8;

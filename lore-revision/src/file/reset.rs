@@ -227,6 +227,33 @@ pub struct ResetOptions {
     pub single_node: bool,
 }
 
+/// Which side of a merge a reset to the last merge point restores.
+///
+/// A merge revision holds the content its conflicts were resolved with, so the side that lost
+/// a resolution survives only as one of the merge's two parents. `Resolved` is zero so a
+/// caller that names no side restores the merge revision itself.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum ResetMergeSide {
+    /// Default, restore the merge revision, whichever side its conflicts were resolved with
+    #[default]
+    Resolved = 0,
+    /// Restore `parent[0]`, the content the branch being reset held going into the merge ("mine")
+    ParentSelf = 1,
+    /// Restore `parent[1]`, the content the merged branch brought in ("theirs")
+    ParentOther = 2,
+}
+
+impl ResetMergeSide {
+    pub fn from_u32(value: u32) -> Self {
+        match value {
+            1 => Self::ParentSelf,
+            2 => Self::ParentOther,
+            _ => Self::Resolved,
+        }
+    }
+}
+
 /// Shared context passed through reset walk functions.
 #[derive(Clone)]
 struct ResetContext {
@@ -247,6 +274,7 @@ enum ResetTarget {
         state_current: Arc<State>,
         branch: BranchId,
         branch_point: Hash,
+        merge_side: ResetMergeSide,
     },
 }
 
@@ -265,12 +293,14 @@ impl ResetTarget {
                 state_current,
                 branch,
                 branch_point,
+                merge_side,
             } => {
                 resolve_last_merged_target(
                     repository.clone(),
                     state_current.clone(),
                     *branch,
                     *branch_point,
+                    *merge_side,
                     path,
                 )
                 .await
@@ -649,6 +679,11 @@ pub async fn reset(
 
 /// Resets files to the state they were in at the last merged revision on a branch.
 ///
+/// `merge_side` picks which side of that merge to restore, which matters only where the merge
+/// held a conflict: the merge revision holds what the conflict was resolved with, and the other
+/// side survives only as a parent of it. Where no merge from the branch is found the branch
+/// point is restored whatever `merge_side` names, the branch having contributed nothing else.
+///
 /// # Events
 ///
 /// ## Standard Events
@@ -677,6 +712,7 @@ pub async fn reset_to_last_merged(
     repository: Arc<RepositoryContext>,
     paths: LoreArray<LoreString>,
     branch: LoreString,
+    merge_side: ResetMergeSide,
     options: ResetOptions,
 ) -> Result<(), ResetError> {
     if branch.is_empty() {
@@ -763,6 +799,7 @@ pub async fn reset_to_last_merged(
                     state_current,
                     branch: branch_id,
                     branch_point,
+                    merge_side,
                 },
                 state_staged,
                 paths,
@@ -886,6 +923,7 @@ async fn resolve_last_merged_target(
     state_current: Arc<State>,
     branch_id: BranchId,
     branch_point: Hash,
+    merge_side: ResetMergeSide,
     relative_path: &RelativePath,
 ) -> Result<Arc<State>, ResetError> {
     let mut state_start = state_current;
@@ -934,9 +972,35 @@ async fn resolve_last_merged_target(
         )
         .await
         {
-            state_target = state_merge;
             lore_debug!(
-                "Found revision where node was merged from branch: {relative_path} use branch point revision {} -> {}",
+                "Found revision where node was merged from branch: {relative_path} in merge revision {} -> {}",
+                state_merge.revision(),
+                state_merge.revision_number()
+            );
+            // A merge revision holds the content its conflicts were resolved with, so a side
+            // that lost a resolution survives only as one of the merge's parents: `parent[0]`
+            // is the branch the merge was made on and `parent[1]` is the branch it merged in.
+            let parent = match merge_side {
+                ResetMergeSide::Resolved => None,
+                ResetMergeSide::ParentSelf => Some(state_merge.parent_self()),
+                ResetMergeSide::ParentOther => Some(state_merge.parent_other()),
+            };
+
+            state_target = state_merge.clone();
+            if let Some(parent) = parent {
+                if parent.is_zero() {
+                    return Err(RevisionNotFound {
+                        revision: format!("{merge_side:?} of merge {}", state_merge.revision()),
+                    }
+                    .into());
+                }
+                state_target = state::State::deserialize(repository.clone(), parent)
+                    .await
+                    .forward::<ResetError>("Failed to deserialize merge parent state")?;
+            }
+
+            lore_debug!(
+                "Resetting {relative_path} to {merge_side:?} of that merge, revision {} -> {}",
                 state_target.revision(),
                 state_target.revision_number()
             );

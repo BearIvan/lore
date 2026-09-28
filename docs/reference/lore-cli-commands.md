@@ -4,7 +4,7 @@ The `lore` command-line client drives every local and remote Lore operation: cre
 
 This page documents the command surface only. For a guided first run, see the [Quickstart](../tutorials/quickstart.md); to install the client, see [Install the Lore CLI](../how-to/install-lore-cli.md).
 
-This page is generated from `lore --markdown-help` (CLI `0.10.1-nightly+1183`). Everything below the marker is generated — change the CLI, not this section. To regenerate in place (preserving this header), run from the repository root:
+This page is generated from `lore --markdown-help` (CLI `0.10.1-nightly+1203`). Everything below the marker is generated — change the CLI, not this section. To regenerate in place (preserving this header), run from the repository root:
 
 ```bash
 printf '%s\n' "$( { sed '/^<!-- BEGIN generated/q' docs/reference/lore-cli-commands.md; lore --markdown-help | tail -n +4; } )" > docs/reference/.cli.tmp && mv docs/reference/.cli.tmp docs/reference/lore-cli-commands.md
@@ -1883,6 +1883,8 @@ Reset changes to a path or file to the current revision, discarding your local c
 * `--targets <file>` — Path to a targets file containing all the paths to all files
 * `--revision <revision>` — Revision to reset files to
 * `--last-merged-from <branch>` — If given, the files will be reset to the last point of merge from this branch, or the branch point from this branch if no merge has been performed
+* `--mine` — Reset to the version this branch held going into that merge rather than the version the conflict was resolved with
+* `--theirs` — Reset to the version the merged branch brought in rather than the version the conflict was resolved with
 
 
 
@@ -2472,6 +2474,8 @@ Reset changes to a file or directory
 * `--targets <file>` — Path to a targets file containing all the paths to all files
 * `--revision <revision>` — Revision to reset files to
 * `--last-merged-from <branch>` — If given, the files will be reset to the last point of merge from this branch, or the branch point from this branch if no merge has been performed
+* `--mine` — Reset to the version this branch held going into that merge rather than the version the conflict was resolved with
+* `--theirs` — Reset to the version the merged branch brought in rather than the version the conflict was resolved with
 
 
 

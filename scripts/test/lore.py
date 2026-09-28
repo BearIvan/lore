@@ -1512,6 +1512,8 @@ class Lore:
         targets: str | None = None,
         revision: str | None = None,
         last_merged_from: str | None = None,
+        mine: bool = False,
+        theirs: bool = False,
         **kwargs: Unpack[GlobalOptions],
     ):
         paths = self._fix_paths(paths)
@@ -1521,7 +1523,9 @@ class Lore:
             + (["--purge"] if purge else [])
             + (["--targets", targets] if targets else [])
             + (["--revision", revision] if revision else [])
-            + (["--last-merged-from", last_merged_from] if last_merged_from else []),
+            + (["--last-merged-from", last_merged_from] if last_merged_from else [])
+            + (["--mine"] if mine else [])
+            + (["--theirs"] if theirs else []),
             **kwargs,
         )
 
@@ -2121,6 +2125,8 @@ class Lore:
         targets: str | None = None,
         revision: str | None = None,
         last_merged_from: str | None = None,
+        mine: bool = False,
+        theirs: bool = False,
         **kwargs: Unpack[GlobalOptions],
     ):
         paths = self._fix_paths(paths)
@@ -2130,7 +2136,9 @@ class Lore:
             + (["--purge"] if purge else [])
             + (["--targets", targets] if targets else [])
             + (["--revision", revision] if revision else [])
-            + (["--last-merged-from", last_merged_from] if last_merged_from else []),
+            + (["--last-merged-from", last_merged_from] if last_merged_from else [])
+            + (["--mine"] if mine else [])
+            + (["--theirs"] if theirs else []),
             **kwargs,
         )
 
