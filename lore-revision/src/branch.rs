@@ -2650,12 +2650,46 @@ pub async fn diff3_with_source_cap(
         target: target_revision,
     };
 
+    relay_revision_diff3(
+        repository,
+        summary,
+        path,
+        include_same,
+        auto_resolve,
+        source_cap,
+        history_walk_concurrency,
+        graft_view,
+        &tx,
+    )
+    .await?;
+
+    Ok(summary)
+}
+
+/// Drives `revision::diff3` from the resolved base and relays its items through
+/// [`emit_diff_item_with_auto_resolve`].
+///
+/// A function of its own because its stream and items live across several
+/// awaits: kept in [`diff3_with_source_cap`] they would take space in its
+/// future while the base is resolved as well.
+#[allow(clippy::too_many_arguments)]
+async fn relay_revision_diff3(
+    repository: Arc<RepositoryContext>,
+    summary: Diff3Summary,
+    path: Option<RelativePath>,
+    include_same: bool,
+    auto_resolve: bool,
+    source_cap: Option<usize>,
+    history_walk_concurrency: Option<usize>,
+    graft_view: Option<Arc<crate::filter::Filter>>,
+    tx: &mpsc::Sender<Result<DiffItem, BranchError>>,
+) -> Result<(), BranchError> {
     let (inner_tx, mut inner_rx) = mpsc::channel::<Result<DiffItem, StateError>>(256);
     let mut driver = std::pin::pin!(revision::diff3_with_source_cap(
-        repository.clone(),
-        base_revision,
-        source_revision,
-        target_revision,
+        repository,
+        summary.base,
+        summary.source,
+        summary.target,
         path,
         include_same,
         source_cap,
@@ -2668,7 +2702,7 @@ pub async fn diff3_with_source_cap(
             biased;
             item = inner_rx.recv() => if let Some(item) = item {
                 let item = item.forward::<BranchError>("Failed to calculate branch diff")?;
-                emit_diff_item_with_auto_resolve(item, auto_resolve, &tx).await?;
+                emit_diff_item_with_auto_resolve(item, auto_resolve, tx).await?;
             } else {
                 (&mut driver).await.forward::<BranchError>("Failed to calculate branch diff")?;
                 break;
@@ -2677,14 +2711,14 @@ pub async fn diff3_with_source_cap(
                 result.forward::<BranchError>("Failed to calculate branch diff")?;
                 while let Some(item) = inner_rx.recv().await {
                     let item = item.forward::<BranchError>("Failed to calculate branch diff")?;
-                    emit_diff_item_with_auto_resolve(item, auto_resolve, &tx).await?;
+                    emit_diff_item_with_auto_resolve(item, auto_resolve, tx).await?;
                 }
                 break;
             }
         }
     }
 
-    Ok(summary)
+    Ok(())
 }
 
 /// Per-`DiffItem` step of `branch::diff3`'s auto-resolve drain. Kept

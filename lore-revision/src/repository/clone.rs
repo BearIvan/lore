@@ -995,6 +995,42 @@ pub async fn clone(
 
     let (repository, prefetched_branch) = tokio::try_join!(local_init_fut, prefetch_branch_fut)?;
 
+    clone_into(
+        repository,
+        remote,
+        repository_metadata,
+        prefetched_branch,
+        path,
+        revision,
+        view,
+        layer,
+        options,
+        &mut repository_path_guard,
+    )
+    .await
+}
+
+/// Completes [`clone`] once the repository exists locally and its branch is fetched: applies the
+/// view, resolves the revision and layer, records the branch and materializes the tree.
+///
+/// A function of its own because its locals live across several awaits: kept in [`clone`] they
+/// would take space in its future while the repository is created as well.
+#[allow(clippy::too_many_arguments)]
+async fn clone_into(
+    repository: Arc<RepositoryContext>,
+    remote: Arc<lore_transport::Connection>,
+    repository_metadata: repository::RepositoryMetadata,
+    prefetched_branch: Option<branch::BranchStatus>,
+    path: &Path,
+    revision: Option<String>,
+    view: Option<&Path>,
+    layer: Option<CloneLayer>,
+    options: CloneOptions,
+    repository_path_guard: &mut RepositoryCloneGuard,
+) -> Result<(), CloneError> {
+    let context = execution_context();
+    let call = context.globals();
+
     let mut dot_directory_guard =
         RepositoryCloneGuard::new(repository.dot_dir_path()?, call.dry_run());
 

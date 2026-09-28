@@ -562,6 +562,21 @@ pub async fn cache(
         .forward("connecting to remote storage for cache");
     let remote_storage = storage_result?;
 
+    cache_through(repository, remote_storage, address, cache_fragmented).await
+}
+
+/// [`cache`] once connected: fetches every fragment at `address` the local store lacks
+/// through `remote_storage` and stores it, then the subfragments of fragmented ones when
+/// `cache_fragmented` is set.
+///
+/// A function of its own because its batches live across several awaits: kept in [`cache`]
+/// they would take space in its future while the remote is connected as well.
+async fn cache_through(
+    repository: Arc<RepositoryContext>,
+    remote_storage: Arc<StorageSession>,
+    address: Vec<Address>,
+    cache_fragmented: bool,
+) -> Result<usize, ImmutableError> {
     const MAX_REQUEST_COUNT: usize = 1000;
 
     let mut query_address = address;

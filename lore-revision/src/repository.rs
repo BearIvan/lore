@@ -2405,95 +2405,112 @@ pub async fn load_and_connect_with_token(
     // load_and_connect. A read-only invocation that hits a repository needing
     // registration/migration simply defers the work to the next write command.
     if repository.try_write_token().is_some() {
-        // Register instance if not already present in the mutable store.
-        // This covers both newly generated IDs and pre-existing instances
-        // upgrading from a version before instance registration was added.
-        // Registration also retires any registration another instance left
-        // at this path, so a re-created checkout is listed once.
-        let (instance_key, instance_key_type) =
-            crate::instance::instance_key(repository.salt(), instance_id);
-        let needs_registration = repository
-            .read_mutable_store()
-            .load(repository.id, instance_key, instance_key_type)
-            .await
-            .map_or(true, |h| h.is_zero());
-        if needs_registration
-            && let Err(err) = Box::pin(crate::instance::register_instance(
-                &repository,
-                instance_id,
-                &path.display().to_string(),
-            ))
-            .await
-        {
-            lore_warn!("Failed to register instance: {err}");
-        }
-
-        // Lazy migration: move file-based anchors to the mutable store.
-        //
-        // Order matters for crash safety: write the new keys, flush the mutable
-        // store, then remove the old files. If a crash occurred after removing
-        // a file but before the new keys reached disk, the anchor would be lost
-        // entirely — file gone, mutable store unchanged. Keeping the old files
-        // until the flush returns means a crash mid-migration is recoverable:
-        // the next write-mode load reruns the migration from the file.
-        let current_anchor_path = dot_path.join(crate::anchor::CURRENT);
-        let staged_anchor_path = dot_path.join(crate::anchor::STAGED);
-        let mut migrated_current = false;
-        let mut migrated_staged = false;
-
-        if current_anchor_path.exists() {
-            let (revision, branch) = crate::anchor::deserialize_migrate_old(&current_anchor_path)
-                .await
-                .internal("Failed to deserialize repository anchor")?;
-            crate::instance::store_current_anchor_branch(&repository, branch)
-                .await
-                .forward::<RepositoryError>("Failed to serialize repository anchor")?;
-            crate::instance::store_current_anchor(&repository, revision)
-                .await
-                .forward::<RepositoryError>("Failed to serialize repository anchor")?;
-            migrated_current = true;
-        }
-        if staged_anchor_path.exists() {
-            match crate::anchor::deserialize_migrate_old(&staged_anchor_path).await {
-                Ok((revision, _branch)) => {
-                    match crate::instance::store_staged_anchor(&repository, revision).await {
-                        Ok(()) => migrated_staged = true,
-                        Err(err) => {
-                            lore_warn!("Failed to migrate staged anchor revision: {err}");
-                        }
-                    }
-                }
-                Err(err) => {
-                    lore_warn!("Failed to read file-based staged anchor for migration: {err}");
-                }
-            }
-        }
-
-        if migrated_current || migrated_staged {
-            repository.flush(true).await?;
-        }
-
-        if migrated_current {
-            if let Err(err) = lore_io::IoDriver::global()
-                .remove_file(&current_anchor_path)
-                .await
-            {
-                lore_warn!("Failed to remove old current anchor file: {err}");
-            }
-            lore_debug!("Migrated file-based current anchor to mutable store");
-        }
-        if migrated_staged {
-            if let Err(err) = lore_io::IoDriver::global()
-                .remove_file(&staged_anchor_path)
-                .await
-            {
-                lore_warn!("Failed to remove old staged anchor file: {err}");
-            }
-            lore_debug!("Migrated file-based staged anchor to mutable store");
-        }
+        register_instance_and_migrate_anchors(&repository, instance_id, path, &dot_path).await?;
     }
 
     Ok(repository)
+}
+
+/// The write-mode part of [`load_and_connect_with_token`]: registers the
+/// instance if needed and moves file-based anchors to the mutable store.
+///
+/// A function of its own because its locals live across several awaits: kept
+/// in [`load_and_connect_with_token`] they would take space in its future while
+/// the stores are created as well.
+async fn register_instance_and_migrate_anchors(
+    repository: &Arc<RepositoryContext>,
+    instance_id: crate::instance::InstanceId,
+    path: &Path,
+    dot_path: &Path,
+) -> Result<(), RepositoryError> {
+    // Register instance if not already present in the mutable store.
+    // This covers both newly generated IDs and pre-existing instances
+    // upgrading from a version before instance registration was added.
+    // Registration also retires any registration another instance left
+    // at this path, so a re-created checkout is listed once.
+    let (instance_key, instance_key_type) =
+        crate::instance::instance_key(repository.salt(), instance_id);
+    let needs_registration = repository
+        .read_mutable_store()
+        .load(repository.id, instance_key, instance_key_type)
+        .await
+        .map_or(true, |h| h.is_zero());
+    if needs_registration
+        && let Err(err) = Box::pin(crate::instance::register_instance(
+            repository,
+            instance_id,
+            &path.display().to_string(),
+        ))
+        .await
+    {
+        lore_warn!("Failed to register instance: {err}");
+    }
+
+    // Lazy migration: move file-based anchors to the mutable store.
+    //
+    // Order matters for crash safety: write the new keys, flush the mutable
+    // store, then remove the old files. If a crash occurred after removing
+    // a file but before the new keys reached disk, the anchor would be lost
+    // entirely — file gone, mutable store unchanged. Keeping the old files
+    // until the flush returns means a crash mid-migration is recoverable:
+    // the next write-mode load reruns the migration from the file.
+    let current_anchor_path = dot_path.join(crate::anchor::CURRENT);
+    let staged_anchor_path = dot_path.join(crate::anchor::STAGED);
+    let mut migrated_current = false;
+    let mut migrated_staged = false;
+
+    if current_anchor_path.exists() {
+        let (revision, branch) = crate::anchor::deserialize_migrate_old(&current_anchor_path)
+            .await
+            .internal("Failed to deserialize repository anchor")?;
+        crate::instance::store_current_anchor_branch(repository, branch)
+            .await
+            .forward::<RepositoryError>("Failed to serialize repository anchor")?;
+        crate::instance::store_current_anchor(repository, revision)
+            .await
+            .forward::<RepositoryError>("Failed to serialize repository anchor")?;
+        migrated_current = true;
+    }
+    if staged_anchor_path.exists() {
+        match crate::anchor::deserialize_migrate_old(&staged_anchor_path).await {
+            Ok((revision, _branch)) => {
+                match crate::instance::store_staged_anchor(repository, revision).await {
+                    Ok(()) => migrated_staged = true,
+                    Err(err) => {
+                        lore_warn!("Failed to migrate staged anchor revision: {err}");
+                    }
+                }
+            }
+            Err(err) => {
+                lore_warn!("Failed to read file-based staged anchor for migration: {err}");
+            }
+        }
+    }
+
+    if migrated_current || migrated_staged {
+        repository.flush(true).await?;
+    }
+
+    if migrated_current {
+        if let Err(err) = lore_io::IoDriver::global()
+            .remove_file(&current_anchor_path)
+            .await
+        {
+            lore_warn!("Failed to remove old current anchor file: {err}");
+        }
+        lore_debug!("Migrated file-based current anchor to mutable store");
+    }
+    if migrated_staged {
+        if let Err(err) = lore_io::IoDriver::global()
+            .remove_file(&staged_anchor_path)
+            .await
+        {
+            lore_warn!("Failed to remove old staged anchor file: {err}");
+        }
+        lore_debug!("Migrated file-based staged anchor to mutable store");
+    }
+
+    Ok(())
 }
 
 pub const MAX_NAME_LEN: usize = 1000;
@@ -2831,263 +2848,16 @@ pub async fn branch_switch(
         branch_stack[0].revision
     };
 
-    let (branch_latest_local, branch_latest_remote, branch_location, branch_signature) = {
-        let signature = if let Some(revision) = options.signature.as_ref() {
-            let resolved =
-                revision::resolve_in_branch(repository.clone(), revision, global.search_location())
-                    .await
-                    .forward::<RepositoryError>("Invalid revision")?;
-            let revision = resolved.revision;
-
-            let state = state::State::deserialize(repository.clone(), revision)
-                .await
-                .forward::<RepositoryError>("Invalid revision")?;
-            if state.branch(repository.clone()).await != branch.id && revision != branch_point {
-                return Err(RepositoryError::internal(
-                    "Given revision is not on the target branch",
-                ));
-            }
-
-            revision
-        } else {
-            Hash::default()
-        };
-
-        lore_debug!(
-            "Resolved signature {:?} to {}",
-            options.signature,
-            signature
-        );
-
-        let local_head = branch::load_latest(repository.clone(), branch.id)
-            .await
-            .ok();
-
-        let remote_branch = if options.local {
-            lore_debug!("Using local latest revision");
-            None
-        } else {
-            match repository.remote().await {
-                Ok(remote) => {
-                    lore_debug!("Loading remote latest revision");
-                    match branch::load_remote(remote, repository.id, branch.id).await {
-                        Ok(remote_head) => Some(remote_head),
-                        Err(err) if err.is_branch_not_found() => None,
-                        Err(err) => {
-                            if local_head.is_some() {
-                                lore_debug!(
-                                    "Failed to load remote branch latest revision, falling back to local: {err}"
-                                );
-                                None
-                            } else {
-                                return Err(err).forward::<RepositoryError>(
-                                    "Failed to load remote branch latest revision",
-                                );
-                            }
-                        }
-                    }
-                }
-                Err(err) => {
-                    if local_head.is_some() {
-                        lore_debug!(
-                            "Remote unavailable, switching using local branch state: {err}"
-                        );
-                        None
-                    } else {
-                        return Err(err).forward::<RepositoryError>(
-                            "Failed to load remote branch latest revision",
-                        );
-                    }
-                }
-            }
-        };
-
-        if local_head.is_none() && remote_branch.is_none() {
-            return Err(RepositoryError::from(BranchNotFound {
-                branch: branch_name.to_string(),
-            }));
-        }
-
-        if let Some(local_head) = local_head {
-            let signature_if_local = if signature.is_zero() {
-                local_head
-            } else {
-                signature
-            };
-            let (latest_local, latest_remote, location, signature) = if let Some(remote_status) =
-                remote_branch
-            {
-                let remote_head = remote_status.latest;
-                let signature_if_remote = if signature.is_zero() {
-                    remote_head
-                } else {
-                    signature
-                };
-                // Check if remote is ahead of local and local is not diverged
-                lore_debug!(
-                    "Check if remote revision {remote_head} is ahead of local revision {local_head}"
-                );
-                if let Ok(remote_state) =
-                    state::State::deserialize(repository.clone(), remote_head).await
-                {
-                    if let Ok(local_state) =
-                        state::State::deserialize(repository.clone(), local_head).await
-                    {
-                        if remote_state.revision_number() > local_state.revision_number() {
-                            // Check for divergence
-                            lore_debug!(
-                                "Remote revision {} is ahead of local revision {}, check for divergence",
-                                remote_state.revision_number(),
-                                local_state.revision_number()
-                            );
-                            if find::find_revision(
-                                repository.clone(),
-                                branch.id,
-                                remote_head,
-                                false,
-                                None,
-                                |state, _metadata| {
-                                    if state.revision() == local_head
-                                        || state.parent_other() == local_head
-                                    {
-                                        find::FindMatchResult::Match
-                                    } else if state.revision_number()
-                                        < local_state.revision_number()
-                                    {
-                                        // Divergence, the remote branch history passed the point
-                                        // where local revision should have been found
-                                        find::FindMatchResult::Abort
-                                    } else {
-                                        find::FindMatchResult::Continue
-                                    }
-                                },
-                            )
-                            .await
-                            .is_ok()
-                            {
-                                lore_debug!("Branch is coherent, sync to remote LATEST");
-                                (
-                                    remote_head,
-                                    remote_head,
-                                    LoreBranchLocation::Remote,
-                                    signature_if_remote,
-                                )
-                            } else {
-                                lore_debug!("Branch is divergent, sync to local LATEST");
-                                (
-                                    local_head,
-                                    remote_head,
-                                    LoreBranchLocation::Local,
-                                    signature_if_local,
-                                )
-                            }
-                        } else if remote_state.revision() == local_state.revision() {
-                            lore_debug!(
-                                "Remote and local revision are equal, treat as remote sync"
-                            );
-                            (
-                                remote_head,
-                                remote_head,
-                                LoreBranchLocation::Remote,
-                                signature_if_remote,
-                            )
-                        } else {
-                            lore_debug!("Local revision is ahead, sync to local latest");
-                            (
-                                local_head,
-                                remote_head,
-                                LoreBranchLocation::Local,
-                                signature_if_local,
-                            )
-                        }
-                    } else {
-                        lore_debug!(
-                            "Failed to load local latest revision state, sync to remote latest"
-                        );
-                        (
-                            remote_head,
-                            remote_head,
-                            LoreBranchLocation::Remote,
-                            signature_if_remote,
-                        )
-                    }
-                } else {
-                    lore_debug!(
-                        "Failed to load remote latest revision state, sync to local latest"
-                    );
-                    (
-                        local_head,
-                        remote_head,
-                        LoreBranchLocation::Local,
-                        signature_if_local,
-                    )
-                }
-            } else {
-                lore_debug!("No remote branch available, sync to local latest");
-                (
-                    local_head,
-                    Hash::default(),
-                    LoreBranchLocation::Local,
-                    signature_if_local,
-                )
-            };
-
-            event::LoreEvent::BranchSwitchBegin(LoreBranchSwitchBeginEventData {
-                branch: LoreBranchSwitchData::new(
-                    branch.id,
-                    branch_name,
-                    latest_local,
-                    latest_remote,
-                    signature,
-                    location,
-                ),
-            })
-            .send();
-
-            (latest_local, latest_remote, location, signature)
-        } else {
-            let Some(remote_status) = remote_branch else {
-                return Err(RepositoryError::from(BranchNotFound {
-                    branch: branch_name.to_string(),
-                }));
-            };
-
-            let signature = if signature.is_zero() {
-                remote_status.latest
-            } else {
-                signature
-            };
-
-            event::LoreEvent::BranchSwitchBegin(LoreBranchSwitchBeginEventData {
-                branch: LoreBranchSwitchData::new(
-                    branch.id,
-                    branch_name,
-                    remote_status.latest,
-                    remote_status.latest,
-                    signature,
-                    LoreBranchLocation::Remote,
-                ),
-            })
-            .send();
-
-            branch_switch_create(
-                repository.clone(),
-                token,
-                branch.id,
-                remote_status.latest,
-                remote_status.metadata,
-                global.dry_run(),
-            )
-            .await?;
-
-            (
-                remote_status.latest,
-                remote_status.latest,
-                LoreBranchLocation::Remote,
-                signature,
-            )
-        }
-    };
+    let (branch_latest_local, branch_latest_remote, branch_location, branch_signature) =
+        branch_switch_target(
+            &repository,
+            token,
+            branch.id,
+            branch_name,
+            branch_point,
+            &options,
+        )
+        .await?;
 
     // Reject a switch that would discard an actually-staged change; dirty-only
     // tracking is carried forward by rebase_staged_anchor below. --force and
@@ -3212,6 +2982,272 @@ pub async fn branch_switch(
     .send();
 
     Ok(branch_latest_local)
+}
+
+/// The revision a switch to `branch_id` lands on, as `(latest local, latest remote, location,
+/// signature)`: the given signature, or the local or remote latest, creating the local branch
+/// where only the remote holds it.
+///
+/// A function of its own because its locals live across several awaits: kept in
+/// [`branch_switch`] they would take space in its future while the layers switch as well.
+async fn branch_switch_target(
+    repository: &Arc<RepositoryContext>,
+    token: &RepositoryWriteToken,
+    branch_id: BranchId,
+    branch_name: &str,
+    branch_point: Hash,
+    options: &BranchSwitchOptions,
+) -> Result<(Hash, Hash, LoreBranchLocation, Hash), RepositoryError> {
+    let context = execution_context();
+    let global = context.globals();
+
+    let signature = if let Some(revision) = options.signature.as_ref() {
+        let resolved =
+            revision::resolve_in_branch(repository.clone(), revision, global.search_location())
+                .await
+                .forward::<RepositoryError>("Invalid revision")?;
+        let revision = resolved.revision;
+
+        let state = state::State::deserialize(repository.clone(), revision)
+            .await
+            .forward::<RepositoryError>("Invalid revision")?;
+        if state.branch(repository.clone()).await != branch_id && revision != branch_point {
+            return Err(RepositoryError::internal(
+                "Given revision is not on the target branch",
+            ));
+        }
+
+        revision
+    } else {
+        Hash::default()
+    };
+
+    lore_debug!(
+        "Resolved signature {:?} to {}",
+        options.signature,
+        signature
+    );
+
+    let local_head = branch::load_latest(repository.clone(), branch_id)
+        .await
+        .ok();
+
+    let remote_branch = if options.local {
+        lore_debug!("Using local latest revision");
+        None
+    } else {
+        match repository.remote().await {
+            Ok(remote) => {
+                lore_debug!("Loading remote latest revision");
+                match branch::load_remote(remote, repository.id, branch_id).await {
+                    Ok(remote_head) => Some(remote_head),
+                    Err(err) if err.is_branch_not_found() => None,
+                    Err(err) => {
+                        if local_head.is_some() {
+                            lore_debug!(
+                                "Failed to load remote branch latest revision, falling back to local: {err}"
+                            );
+                            None
+                        } else {
+                            return Err(err).forward::<RepositoryError>(
+                                "Failed to load remote branch latest revision",
+                            );
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                if local_head.is_some() {
+                    lore_debug!("Remote unavailable, switching using local branch state: {err}");
+                    None
+                } else {
+                    return Err(err).forward::<RepositoryError>(
+                        "Failed to load remote branch latest revision",
+                    );
+                }
+            }
+        }
+    };
+
+    if local_head.is_none() && remote_branch.is_none() {
+        return Err(RepositoryError::from(BranchNotFound {
+            branch: branch_name.to_string(),
+        }));
+    }
+
+    if let Some(local_head) = local_head {
+        let signature_if_local = if signature.is_zero() {
+            local_head
+        } else {
+            signature
+        };
+        let (latest_local, latest_remote, location, signature) = if let Some(remote_status) =
+            remote_branch
+        {
+            let remote_head = remote_status.latest;
+            let signature_if_remote = if signature.is_zero() {
+                remote_head
+            } else {
+                signature
+            };
+            // Check if remote is ahead of local and local is not diverged
+            lore_debug!(
+                "Check if remote revision {remote_head} is ahead of local revision {local_head}"
+            );
+            if let Ok(remote_state) =
+                state::State::deserialize(repository.clone(), remote_head).await
+            {
+                if let Ok(local_state) =
+                    state::State::deserialize(repository.clone(), local_head).await
+                {
+                    if remote_state.revision_number() > local_state.revision_number() {
+                        // Check for divergence
+                        lore_debug!(
+                            "Remote revision {} is ahead of local revision {}, check for divergence",
+                            remote_state.revision_number(),
+                            local_state.revision_number()
+                        );
+                        if find::find_revision(
+                            repository.clone(),
+                            branch_id,
+                            remote_head,
+                            false,
+                            None,
+                            |state, _metadata| {
+                                if state.revision() == local_head
+                                    || state.parent_other() == local_head
+                                {
+                                    find::FindMatchResult::Match
+                                } else if state.revision_number() < local_state.revision_number() {
+                                    // Divergence, the remote branch history passed the point
+                                    // where local revision should have been found
+                                    find::FindMatchResult::Abort
+                                } else {
+                                    find::FindMatchResult::Continue
+                                }
+                            },
+                        )
+                        .await
+                        .is_ok()
+                        {
+                            lore_debug!("Branch is coherent, sync to remote LATEST");
+                            (
+                                remote_head,
+                                remote_head,
+                                LoreBranchLocation::Remote,
+                                signature_if_remote,
+                            )
+                        } else {
+                            lore_debug!("Branch is divergent, sync to local LATEST");
+                            (
+                                local_head,
+                                remote_head,
+                                LoreBranchLocation::Local,
+                                signature_if_local,
+                            )
+                        }
+                    } else if remote_state.revision() == local_state.revision() {
+                        lore_debug!("Remote and local revision are equal, treat as remote sync");
+                        (
+                            remote_head,
+                            remote_head,
+                            LoreBranchLocation::Remote,
+                            signature_if_remote,
+                        )
+                    } else {
+                        lore_debug!("Local revision is ahead, sync to local latest");
+                        (
+                            local_head,
+                            remote_head,
+                            LoreBranchLocation::Local,
+                            signature_if_local,
+                        )
+                    }
+                } else {
+                    lore_debug!(
+                        "Failed to load local latest revision state, sync to remote latest"
+                    );
+                    (
+                        remote_head,
+                        remote_head,
+                        LoreBranchLocation::Remote,
+                        signature_if_remote,
+                    )
+                }
+            } else {
+                lore_debug!("Failed to load remote latest revision state, sync to local latest");
+                (
+                    local_head,
+                    remote_head,
+                    LoreBranchLocation::Local,
+                    signature_if_local,
+                )
+            }
+        } else {
+            lore_debug!("No remote branch available, sync to local latest");
+            (
+                local_head,
+                Hash::default(),
+                LoreBranchLocation::Local,
+                signature_if_local,
+            )
+        };
+
+        event::LoreEvent::BranchSwitchBegin(LoreBranchSwitchBeginEventData {
+            branch: LoreBranchSwitchData::new(
+                branch_id,
+                branch_name,
+                latest_local,
+                latest_remote,
+                signature,
+                location,
+            ),
+        })
+        .send();
+
+        Ok((latest_local, latest_remote, location, signature))
+    } else {
+        let Some(remote_status) = remote_branch else {
+            return Err(RepositoryError::from(BranchNotFound {
+                branch: branch_name.to_string(),
+            }));
+        };
+
+        let signature = if signature.is_zero() {
+            remote_status.latest
+        } else {
+            signature
+        };
+
+        event::LoreEvent::BranchSwitchBegin(LoreBranchSwitchBeginEventData {
+            branch: LoreBranchSwitchData::new(
+                branch_id,
+                branch_name,
+                remote_status.latest,
+                remote_status.latest,
+                signature,
+                LoreBranchLocation::Remote,
+            ),
+        })
+        .send();
+
+        branch_switch_create(
+            repository.clone(),
+            token,
+            branch_id,
+            remote_status.latest,
+            remote_status.metadata,
+            global.dry_run(),
+        )
+        .await?;
+
+        Ok((
+            remote_status.latest,
+            remote_status.latest,
+            LoreBranchLocation::Remote,
+            signature,
+        ))
+    }
 }
 
 fn layer_branch_name(branch_name: &str, layer_id: RepositoryId) -> String {

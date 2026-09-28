@@ -4321,6 +4321,10 @@ async fn merge_into_link(
     Ok(())
 }
 
+/// Merges the current branch into `branch` and pushes the result.
+///
+/// The link-only merge `--link` asks for is boxed. Only that option reaches it, and inline it
+/// would make every merge's future as large as its own.
 pub async fn merge_into(
     repository: Arc<RepositoryContext>,
     token: &RepositoryWriteToken,
@@ -4400,7 +4404,7 @@ pub async fn merge_into(
     // instead of diffing all changes. This avoids applying internal link changes
     // through the parent diff machinery.
     if let Some(ref link_path) = options.link {
-        return merge_into_link(
+        return Box::pin(merge_into_link(
             repository,
             token,
             branch,
@@ -4410,7 +4414,7 @@ pub async fn merge_into(
             branch_latest,
             link_path,
             &options.inherit_metadata,
-        )
+        ))
         .await;
     }
 
