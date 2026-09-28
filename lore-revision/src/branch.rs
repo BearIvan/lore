@@ -2697,26 +2697,21 @@ async fn emit_diff_item_with_auto_resolve(
     auto_resolve: bool,
     tx: &mpsc::Sender<Result<DiffItem, BranchError>>,
 ) -> Result<(), BranchError> {
-    match item {
-        DiffItem::Change(c) => tx
-            .send(Ok(DiffItem::Change(c)))
-            .await
-            .map_err(|_send_err| Internal::msg("diff3 channel closed").into()),
-        DiffItem::Conflict(pair) => {
-            let (change_from, change_to) = *pair;
-            if auto_resolve
-                && let Some(resolved) = try_auto_resolve_conflict(&change_from, &change_to).await?
-            {
-                return tx
-                    .send(Ok(DiffItem::Change(resolved)))
-                    .await
-                    .map_err(|_send_err| Internal::msg("diff3 channel closed").into());
+    let item = match item {
+        DiffItem::Conflict(pair) if auto_resolve => {
+            match try_auto_resolve_conflict(&pair.0, &pair.1).await? {
+                Some(resolved) => DiffItem::Change(resolved),
+                None => DiffItem::Conflict(pair),
             }
-            tx.send(Ok(DiffItem::Conflict(Box::new((change_from, change_to)))))
-                .await
-                .map_err(|_send_err| Internal::msg("diff3 channel closed").into())
         }
-    }
+        item => item,
+    };
+    let permit = tx
+        .reserve()
+        .await
+        .map_err(|_closed| Internal::msg("diff3 channel closed"))?;
+    permit.send(Ok(item));
+    Ok(())
 }
 
 /// Realises the three sides of one conflict into temp files and runs

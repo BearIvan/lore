@@ -18,16 +18,22 @@ use crate::state::StateError;
 /// its own failure, reported where it ends rather than in place of a change.
 pub type ChangeSender = mpsc::Sender<NodeChange>;
 
-/// Emits one change to the caller reading them.
+/// Emits the change `build` makes to the caller reading them, once the channel has room for it.
 ///
-/// A closed channel is a caller that has stopped listening, which the walk learns of here: the
-/// error unwinds it, and a caller that closed deliberately already has its answer and discards
-/// that verdict.
-pub(crate) async fn emit(changes: &ChangeSender, change: NodeChange) -> Result<(), StateError> {
-    changes
-        .send(change)
+/// `build` runs after the wait for room, so a walk waiting to emit holds what it builds the
+/// change from rather than the change. A closed channel is a caller that has stopped listening,
+/// which the walk learns of here: the error unwinds it, and a caller that closed deliberately
+/// already has its answer and discards that verdict.
+pub(crate) async fn emit(
+    changes: &ChangeSender,
+    build: impl FnOnce() -> NodeChange,
+) -> Result<(), StateError> {
+    let permit = changes
+        .reserve()
         .await
-        .map_err(|_closed| StateError::internal("Diff receiver dropped"))
+        .map_err(|_closed| StateError::internal("Diff receiver dropped"))?;
+    permit.send(build());
+    Ok(())
 }
 
 /// How many changes a diff may run ahead of the caller reading them, for a caller with no depth
@@ -266,11 +272,11 @@ mod tests {
 
                 let stream = ChangeStream::spawn(async move |changes| {
                     let _guard = guard;
-                    emit(&changes, change.clone()).await?;
+                    emit(&changes, || change.clone()).await?;
                     changes.closed().await;
                     decided.send(()).expect("the test reads the decision");
                     released_by_test.await.expect("the test releases the walk");
-                    emit(&changes, change).await?;
+                    emit(&changes, || change).await?;
                     Ok(())
                 });
 
@@ -314,7 +320,7 @@ mod tests {
 
                 let stream = ChangeStream::spawn(async move |changes| {
                     let _guard = guard;
-                    emit(&changes, change).await?;
+                    emit(&changes, || change).await?;
                     Ok(())
                 });
 

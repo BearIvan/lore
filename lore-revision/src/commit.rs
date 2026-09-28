@@ -2413,16 +2413,13 @@ async fn collect_file(
         .total_bytes
         .fetch_add(node_size, Ordering::Relaxed);
     stats.complete.file_total.fetch_add(1, Ordering::Relaxed);
-    if file_tx
-        .send(FileToCommit {
-            node_id,
-            relative_path,
-        })
-        .await
-        .is_err()
-    {
+    let Ok(permit) = file_tx.reserve().await else {
         return Err(CommitError::internal("Recursion task failed"));
-    }
+    };
+    permit.send(FileToCommit {
+        node_id,
+        relative_path,
+    });
     Ok(())
 }
 

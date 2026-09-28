@@ -685,17 +685,21 @@ pub async fn diff3_with_source_cap(
     };
 
     for change in joined_changes {
-        tx.send(Ok(DiffItem::Change(change)))
+        let permit = tx
+            .reserve()
             .await
-            .map_err(|_send_err| StateError::internal("3-way diff receiver dropped"))?;
+            .map_err(|_closed| StateError::internal("3-way diff receiver dropped"))?;
+        permit.send(Ok(DiffItem::Change(change)));
     }
     for (source_change, target_change) in final_conflicts {
-        tx.send(Ok(DiffItem::Conflict(Box::new((
+        let permit = tx
+            .reserve()
+            .await
+            .map_err(|_closed| StateError::internal("3-way diff receiver dropped"))?;
+        permit.send(Ok(DiffItem::Conflict(Box::new((
             source_change,
             target_change,
-        )))))
-        .await
-        .map_err(|_send_err| StateError::internal("3-way diff receiver dropped"))?;
+        )))));
     }
     Ok(summary)
 }

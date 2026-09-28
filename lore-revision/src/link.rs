@@ -2278,7 +2278,7 @@ mod tests {
             link_repository_id,
             link_node_id,
             parent_repository_id: RepositoryId::from([9; 16]),
-            link_state: Arc::new(State::new()),
+            link_state: State::new(),
         }
     }
 

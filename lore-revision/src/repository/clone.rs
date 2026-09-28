@@ -450,8 +450,9 @@ impl BlockDiscoverDispatcher {
             Err(mpsc::error::TrySendError::Full(item)) => {
                 let dispatcher = Arc::clone(self);
                 lore_spawn!(async move {
-                    if tx.send(item).await.is_err() {
-                        dispatcher.item_complete();
+                    match tx.reserve().await {
+                        Ok(permit) => permit.send(item),
+                        Err(_closed) => dispatcher.item_complete(),
                     }
                 });
             }
@@ -588,19 +589,15 @@ async fn process_block_item(
                     .total_bytes
                     .fetch_add(node.size, Ordering::Relaxed);
 
-                if dispatcher
-                    .file_tx
-                    .send(CloneWorkItem {
-                        repository: dispatcher.repository.clone(),
-                        node,
-                        repository_path: node_path,
-                    })
-                    .await
-                    .is_err()
-                {
+                let Ok(permit) = dispatcher.file_tx.reserve().await else {
                     // Receiver dropped, consumer encountered an error
                     return Err(CloneError::internal("Recursion task failed"));
-                }
+                };
+                permit.send(CloneWorkItem {
+                    repository: dispatcher.repository.clone(),
+                    node,
+                    repository_path: node_path,
+                });
             } else if node.is_link() {
                 if dispatcher.is_shutdown() {
                     dispatcher.item_complete();
@@ -717,18 +714,14 @@ async fn process_block_item_dependency(
             .total_bytes
             .fetch_add(node.size, Ordering::Relaxed);
 
-        if dispatcher
-            .file_tx
-            .send(CloneWorkItem {
-                repository: dispatcher.repository.clone(),
-                node,
-                repository_path: item.repository_path.clone(),
-            })
-            .await
-            .is_err()
-        {
+        let Ok(permit) = dispatcher.file_tx.reserve().await else {
             return Err(CloneError::internal("Recursion task failed"));
-        }
+        };
+        permit.send(CloneWorkItem {
+            repository: dispatcher.repository.clone(),
+            node,
+            repository_path: item.repository_path.clone(),
+        });
     }
 
     // Only load and follow dependencies when this item is marked to do so.

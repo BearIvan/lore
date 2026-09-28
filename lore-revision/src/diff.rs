@@ -90,10 +90,11 @@ pub async fn diff_revision_paths(
                     .await
                 });
             while let Some(change) = walk.next().await {
-                task_tx
-                    .send(Ok(change))
+                let permit = task_tx
+                    .reserve()
                     .await
                     .internal("revision diff receiver dropped")?;
+                permit.send(Ok(change));
             }
             walk.finish()
                 .await

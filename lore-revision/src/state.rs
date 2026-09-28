@@ -5528,15 +5528,12 @@ async fn add_change(
         // Compute flags and create change record
         let flags = compute_change_flags(&node) | measured;
 
-        emit(
-            changes,
-            NodeChange {
-                action,
-                flags,
-                from: from.clone(),
-                to: to.clone(),
-            },
-        )
+        emit(changes, || NodeChange {
+            action,
+            flags,
+            from: from.clone(),
+            to: to.clone(),
+        })
         .await?;
 
         if recursion_node.is_file() {

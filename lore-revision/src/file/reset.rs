@@ -1555,18 +1555,18 @@ async fn reset_walk_node(
     }
 
     // File: hand off to the consumer
-    let item = ResetFileWorkItem {
+    let permit = file_tx
+        .reserve()
+        .await
+        .map_err(|_closed| ResetError::internal("File consumer dropped"))?;
+    permit.send(ResetFileWorkItem {
         repository,
         state_target,
         relative_path,
         name,
         node_id,
         node,
-    };
-    file_tx
-        .send(item)
-        .await
-        .map_err(|_send_err| ResetError::internal("File consumer dropped"))?;
+    });
 
     Ok(())
 }

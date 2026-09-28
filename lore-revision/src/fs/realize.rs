@@ -1537,17 +1537,14 @@ async fn sync_discover_modify_add(
                 .fetch_add(node.size, Ordering::Relaxed);
         }
 
-        if tx
-            .send(SyncWorkItem {
-                change: change.clone(),
-                node,
-            })
-            .await
-            .is_err()
-        {
+        let Ok(permit) = tx.reserve().await else {
             // Receiver dropped, consumer encountered an error
             return Err(SyncError::internal("Recursion task failed"));
-        }
+        };
+        permit.send(SyncWorkItem {
+            change: change.clone(),
+            node,
+        });
     }
     Ok(())
 }

@@ -544,37 +544,34 @@ async fn emit_add_node_single(
         .block(repository.clone(), NodeBlock::index(node_id))
         .await?;
     let node = block.node(Node::index(node_id));
-    emit(
-        changes,
-        NodeChange {
-            action: change::FileAction::Add,
-            flags: compute_change_flags(&node),
-            from: NodeChangeState {
-                mapping: NodeMapping {
-                    repository: repository.clone(),
-                    state: state.clone(),
-                    path: path.clone(),
-                    node: INVALID_NODE,
-                },
-                observed: None,
-                flags: NodeFlags::NoFlags,
-                address: Address::default(),
-                mode: 0,
+    emit(changes, || NodeChange {
+        action: change::FileAction::Add,
+        flags: compute_change_flags(&node),
+        from: NodeChangeState {
+            mapping: NodeMapping {
+                repository: repository.clone(),
+                state: state.clone(),
+                path: path.clone(),
+                node: INVALID_NODE,
             },
-            to: NodeChangeState {
-                mapping: NodeMapping {
-                    repository: repository.clone(),
-                    state: state.clone(),
-                    path: path.clone(),
-                    node: node_id,
-                },
-                observed: None,
-                flags: NodeFlags::from_bits_retain(node.flags),
-                address: node.address,
-                mode: node.mode,
-            },
+            observed: None,
+            flags: NodeFlags::NoFlags,
+            address: Address::default(),
+            mode: 0,
         },
-    )
+        to: NodeChangeState {
+            mapping: NodeMapping {
+                repository: repository.clone(),
+                state: state.clone(),
+                path: path.clone(),
+                node: node_id,
+            },
+            observed: None,
+            flags: NodeFlags::from_bits_retain(node.flags),
+            address: node.address,
+            mode: node.mode,
+        },
+    })
     .await?;
     stats.file_add.fetch_add(1, Ordering::Relaxed);
     Ok(())
@@ -885,29 +882,27 @@ async fn emit_single_delete(
         .block(repository.clone(), NodeBlock::index(node_id))
         .await?;
     let node = block.node(Node::index(node_id));
-    let flags = compute_change_flags(&node);
-    let from = NodeChangeState {
-        mapping: NodeMapping {
-            repository,
-            state,
-            path: path.clone(),
-            node: node_id,
-        },
-        observed: None,
-        flags: NodeFlags::from_bits_retain(node.flags),
-        address: node.address,
-        mode: node.mode,
-    };
-    let to = from.invalid(path.clone());
-    emit(
-        changes,
+    emit(changes, move || {
+        let from = NodeChangeState {
+            mapping: NodeMapping {
+                repository,
+                state,
+                path: path.clone(),
+                node: node_id,
+            },
+            observed: None,
+            flags: NodeFlags::from_bits_retain(node.flags),
+            address: node.address,
+            mode: node.mode,
+        };
+        let to = from.invalid(path.clone());
         NodeChange {
             action: FileAction::Delete,
-            flags,
+            flags: compute_change_flags(&node),
             from,
             to,
-        },
-    )
+        }
+    })
     .await
 }
 

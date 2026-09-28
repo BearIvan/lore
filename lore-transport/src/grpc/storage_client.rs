@@ -351,9 +351,9 @@ impl<K: Clone, S> StreamCache<K, S> {
     /// Reconnect and reissue on a stream death, the way the QUIC client's
     /// `send_with_reconnect` does, so a caller never sees one.
     ///
-    /// A death shows up three ways, all handled here: the send fails because the receiver is
-    /// already gone (the payload comes back with the error, so nothing is lost), the reader
-    /// answers with a disconnect, or it exits without answering at all. Anything else the
+    /// A death shows up three ways, all handled here: reserving a place in the queue fails
+    /// because the receiver is already gone (nothing has been sent, so nothing is lost), the
+    /// reader answers with a disconnect, or it exits without answering at all. Anything else the
     /// reader answers is the server's verdict on this request and goes straight back —
     /// matching QUIC, where `NotFound`, `SlowDown` and `NotAuthorized` bubble rather than
     /// provoking a reconnect.
@@ -383,9 +383,12 @@ impl<K: Clone, S> StreamCache<K, S> {
                 }
             };
 
-            let (tx, rx) = oneshot::channel();
-            let answer = match handle.sender.send((payload.clone(), tx)).await {
-                Ok(()) => rx.await.ok(),
+            let answer = match handle.sender.reserve().await {
+                Ok(permit) => {
+                    let (tx, rx) = oneshot::channel();
+                    permit.send((payload.clone(), tx));
+                    rx.await.ok()
+                }
                 Err(_) => None,
             };
             let server_verdict =
