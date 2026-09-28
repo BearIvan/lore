@@ -683,6 +683,10 @@ impl State {
         Ok((state_current, state_staged, branch))
     }
 
+    /// The state of revision `signature`, empty for a zero signature.
+    ///
+    /// The read is boxed. Inline, it would make every future awaiting a state, several at once
+    /// in a three-way diff, as large as the read.
     pub async fn deserialize(
         repository: Arc<RepositoryContext>,
         signature: Hash,
@@ -692,26 +696,27 @@ impl State {
         }
         let address = Address::zero_context_hash(signature);
         let options = read_options_from_repository(&repository);
-        let mut data = match StateData::read_from_immutable(repository, address, options).await {
-            Ok(data) => data,
-            Err(ImmutableError::AddressNotFound(traced)) => {
-                return Err(StateError::NotFound(
-                    NotFound.chain_err(traced, "state data address not found"),
-                ));
-            }
-            Err(ImmutableError::PayloadNotFound(traced)) => {
-                return Err(StateError::NotFound(
-                    NotFound.chain_err(traced, "state data payload not found"),
-                ));
-            }
-            Err(ImmutableError::SlowDown(traced)) => return Err(StateError::SlowDown(traced)),
-            Err(err) => {
-                return Err(StateError::internal_with_context(
-                    err,
-                    "Failed to read state data",
-                ));
-            }
-        };
+        let mut data =
+            match Box::pin(StateData::read_from_immutable(repository, address, options)).await {
+                Ok(data) => data,
+                Err(ImmutableError::AddressNotFound(traced)) => {
+                    return Err(StateError::NotFound(
+                        NotFound.chain_err(traced, "state data address not found"),
+                    ));
+                }
+                Err(ImmutableError::PayloadNotFound(traced)) => {
+                    return Err(StateError::NotFound(
+                        NotFound.chain_err(traced, "state data payload not found"),
+                    ));
+                }
+                Err(ImmutableError::SlowDown(traced)) => return Err(StateError::SlowDown(traced)),
+                Err(err) => {
+                    return Err(StateError::internal_with_context(
+                        err,
+                        "Failed to read state data",
+                    ));
+                }
+            };
 
         if data.magic != STATE_MAGIC {
             Err(StateError::internal("Corrupt header"))
@@ -3938,6 +3943,9 @@ impl State {
     /// tree. A second install would push another placeholder onto the block
     /// vector and make [`Self::block_count`] report a block the tree does not
     /// have.
+    ///
+    /// Only the read is boxed. Inline, it would make every future awaiting the tree as large as
+    /// the read, whether or not the tree is loaded.
     pub async fn tree(&self, repository: Arc<RepositoryContext>) -> Result<Tree, StateError> {
         {
             let lock = self.runtime.read();
@@ -3967,9 +3975,10 @@ impl State {
             } else {
                 let tree_address = Address::zero_context_hash(hash_tree);
                 let options = read_options_from_repository(&repository);
-                let mut tree = Tree::read_from_immutable(repository, tree_address, options)
-                    .await
-                    .forward::<StateError>("Failed to deserialize tree")?;
+                let mut tree =
+                    Box::pin(Tree::read_from_immutable(repository, tree_address, options))
+                        .await
+                        .forward::<StateError>("Failed to deserialize tree")?;
                 if tree.magic != TREE_MAGIC {
                     return Err(StateError::internal("Tree corrupt header"));
                 } else if tree.format == 0 || tree.format > TreeFormat::Initial as u32 {

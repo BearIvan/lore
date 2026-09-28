@@ -756,47 +756,52 @@ pub async fn is_stored_local(repository: Arc<RepositoryContext>, address: Addres
 // Traits
 // ---------------------------------------------------------------------------
 
-#[async_trait]
 pub trait ReadFromImmutable<SelfType = Self>
 where
     SelfType: zerocopy::IntoBytes + zerocopy::Immutable + zerocopy::FromBytes + std::marker::Send,
 {
-    async fn read_from_immutable(
+    /// Reads the value stored at `address`, zeroed for a zero hash.
+    ///
+    /// The future is not boxed, and is as large as the read. A caller whose own future many
+    /// others hold, such as [`State::deserialize`](crate::state::State::deserialize), boxes it.
+    fn read_from_immutable(
         repository: Arc<RepositoryContext>,
         address: Address,
         options: ReadOptions,
-    ) -> Result<SelfType, ImmutableError> {
-        // This uninit is safe. It either reads all the bytes of the type, or zeroes
-        // out the memory before the data is dropped in case of error
-        let mut elem = std::mem::MaybeUninit::<SelfType>::uninit();
-        // Zero hash returns empty data from load_raw, so zero-init to avoid
-        // uninitialized memory (safe since SelfType: FromBytes)
-        if address.hash.is_zero() {
-            elem.zero();
-        } else {
-            let slice = unsafe {
-                std::slice::from_raw_parts_mut(
-                    elem.as_mut_ptr().cast::<u8>(),
-                    std::mem::size_of::<SelfType>(),
-                )
-            };
-
-            // Bound the read by the compile-time size of the target type so a
-            // corrupt or hostile fragment cannot trigger a large allocation
-            // even if the caller did not supply a cap in `options`.
-            let options = options.with_max_content_size(std::mem::size_of::<SelfType>() as u64);
-
-            read_into(
-                repository, address, None, /* Read full object */
-                slice, options,
-            )
-            .await
-            .inspect_err(|_err| {
+    ) -> impl Future<Output = Result<SelfType, ImmutableError>> + Send {
+        async move {
+            // This uninit is safe. It either reads all the bytes of the type, or zeroes
+            // out the memory before the data is dropped in case of error
+            let mut elem = std::mem::MaybeUninit::<SelfType>::uninit();
+            // Zero hash returns empty data from load_raw, so zero-init to avoid
+            // uninitialized memory (safe since SelfType: FromBytes)
+            if address.hash.is_zero() {
                 elem.zero();
-            })?;
-        }
+            } else {
+                let slice = unsafe {
+                    std::slice::from_raw_parts_mut(
+                        elem.as_mut_ptr().cast::<u8>(),
+                        std::mem::size_of::<SelfType>(),
+                    )
+                };
 
-        Ok(unsafe { elem.assume_init() })
+                // Bound the read by the compile-time size of the target type so a
+                // corrupt or hostile fragment cannot trigger a large allocation
+                // even if the caller did not supply a cap in `options`.
+                let options = options.with_max_content_size(std::mem::size_of::<SelfType>() as u64);
+
+                read_into(
+                    repository, address, None, /* Read full object */
+                    slice, options,
+                )
+                .await
+                .inspect_err(|_err| {
+                    elem.zero();
+                })?;
+            }
+
+            Ok(unsafe { elem.assume_init() })
+        }
     }
 }
 

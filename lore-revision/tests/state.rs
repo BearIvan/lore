@@ -2486,6 +2486,7 @@ mod block_single_flight {
     use lore_base::types::Partition;
     use lore_base::types::TypedBytes;
     use lore_revision::immutable;
+    use lore_revision::immutable::ReadFromImmutable;
     use lore_revision::interface::ExecutionContext;
     use lore_revision::node::Node;
     use lore_revision::node::NodeFileMetadata;
@@ -2495,6 +2496,8 @@ mod block_single_flight {
     use lore_revision::repository::RepositoryContext;
     use lore_revision::repository::RepositoryWriteToken;
     use lore_revision::state::State;
+    use lore_revision::state::StateData;
+    use lore_revision::state::Tree;
     use lore_storage::ImmutableStore;
     use lore_storage::MutableStore;
     use lore_storage::StoreError;
@@ -2932,6 +2935,44 @@ mod block_single_flight {
                     size_of_val(&metadata_block) <= LOOKUP_FUTURE_BUDGET,
                     "a file metadata block lookup holds {} bytes",
                     size_of_val(&metadata_block)
+                );
+            })
+            .await;
+    }
+
+    /// Futures awaiting a tree or a state hold the tree lookup's or the state load's future, so
+    /// the store read each may make stays in a box of its own.
+    #[tokio::test]
+    async fn tree_and_state_loads_keep_their_read_out_of_their_future() {
+        LORE_CONTEXT
+            .scope(setup_test_execution(), async {
+                let (immutable_store, mutable_store, _execution) =
+                    test_store_create().await.expect("Failed to create stores");
+                let repository = Arc::new(RepositoryContext::new_null_context(
+                    immutable_store,
+                    mutable_store,
+                ));
+                let state = State::new();
+                let options = immutable::read_options_from_repository(&repository);
+
+                let tree = state.tree(repository.clone());
+                let tree_read =
+                    Tree::read_from_immutable(repository.clone(), Address::default(), options);
+                let state_load = State::deserialize(repository.clone(), Hash::default());
+                let state_read =
+                    StateData::read_from_immutable(repository, Address::default(), options);
+
+                assert!(
+                    size_of_val(&tree) < size_of_val(&tree_read),
+                    "a tree lookup holds {} bytes, its read {}",
+                    size_of_val(&tree),
+                    size_of_val(&tree_read)
+                );
+                assert!(
+                    size_of_val(&state_load) < size_of_val(&state_read),
+                    "a state load holds {} bytes, its read {}",
+                    size_of_val(&state_load),
+                    size_of_val(&state_read)
                 );
             })
             .await;
