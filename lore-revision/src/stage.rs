@@ -784,7 +784,7 @@ pub(crate) async fn stage_single_node(
                     .forward::<StageError>("Failed to mark node as staged")?;
 
                 if let Some(ref tracker) = link_tracker {
-                    tracker.on_node_changed(repository.id);
+                    tracker.on_node_changed(&repository);
                 }
 
                 if node.is_directory() {
@@ -852,7 +852,7 @@ pub(crate) async fn stage_single_node(
         .forward::<StageError>("Failed to mark node as staged")?;
 
     if let Some(ref tracker) = link_tracker {
-        tracker.on_node_changed(repository.id);
+        tracker.on_node_changed(&repository);
     }
 
     lore_trace!("Staged new node {node_id} for {relative_path}");
@@ -1065,7 +1065,7 @@ pub(crate) async fn stage_delete(
     .await?;
 
     if let Some(ref tracker) = link_tracker {
-        tracker.on_node_changed(repository.id);
+        tracker.on_node_changed(&repository);
     }
 
     // Note that links do not need to recurse into directory, as the subtree exist in
@@ -2137,7 +2137,7 @@ pub(crate) async fn stage_node_from_metadata(
         .await?;
 
         if let Some(ref tracker) = link_tracker {
-            tracker.on_node_changed(repository.id);
+            tracker.on_node_changed(&repository);
         }
 
         lore_trace!("Staged new node {node_id} for {name}");
@@ -2214,7 +2214,7 @@ pub(crate) async fn stage_node_from_metadata(
         .await?;
 
         if let Some(ref tracker) = link_tracker {
-            tracker.on_node_changed(repository.id);
+            tracker.on_node_changed(&repository);
         }
 
         event_action = Some(LoreFileAction::Add);
@@ -2305,7 +2305,7 @@ pub(crate) async fn stage_node_from_metadata(
                     .forward::<StageError>("Failed to mark node as staged")?;
 
                 if let Some(ref tracker) = link_tracker {
-                    tracker.on_node_changed(repository.id);
+                    tracker.on_node_changed(&repository);
                 }
             }
             StageCaseChange::Error => {
@@ -2417,7 +2417,7 @@ pub(crate) async fn stage_node_from_metadata(
             );
 
             if let Some(ref tracker) = link_tracker {
-                tracker.on_node_changed(repository.id);
+                tracker.on_node_changed(&repository);
             }
 
             if event_action.is_none() {

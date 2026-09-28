@@ -891,7 +891,7 @@ async fn unstage_parent_chain(
             block_writer.mark_dirty()
         };
 
-        link_tracker.on_node_changed(repository.id);
+        link_tracker.on_node_changed(&repository);
 
         if dirtied {
             state_staged.block_modified(parent_block.clone(), parent_block_index);
@@ -1042,7 +1042,7 @@ async fn unstage_node(
             }
         }
         node.clear_staged_flags();
-        link_tracker.on_node_changed(repository.id);
+        link_tracker.on_node_changed(&repository);
 
         if node.is_directory() {
             demote_subnodes_to_dirty(
@@ -1109,7 +1109,7 @@ async fn unstage_node(
 
         node.clear_staged_flags();
 
-        link_tracker.on_node_changed(repository.id);
+        link_tracker.on_node_changed(&repository);
 
         let dirtied = {
             let mut block_writer = block.write();

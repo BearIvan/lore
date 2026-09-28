@@ -184,9 +184,16 @@ impl LinkTracker {
         self.links.insert(link_context, false);
     }
 
-    pub fn on_node_changed(&self, repository_id: RepositoryId) {
+    /// Marks the links into `repository` as needing rehashing.
+    ///
+    /// A link's target is always a repository reached through a link, so for any other
+    /// repository this returns before iterating the map, which allocates for every shard.
+    pub fn on_node_changed(&self, repository: &RepositoryContext) {
+        if !repository.is_link() {
+            return;
+        }
         for mut entry in self.links.iter_mut() {
-            if entry.key().link_repository_id == repository_id {
+            if entry.key().link_repository_id == repository.id {
                 *entry.value_mut() = true;
             }
         }
@@ -2256,4 +2263,53 @@ pub fn link_mount_prefix(full_path: &str, link_relative: &str) -> String {
         .unwrap_or(full_path)
         .trim_end_matches('/');
     trimmed.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use lore_base::runtime::LORE_CONTEXT;
+
+    use super::*;
+    use crate::fs::filesystem_provider::tests::setup_test_execution;
+    use crate::fs::filesystem_provider::tests::test_store_create;
+
+    fn link(link_repository_id: RepositoryId, link_node_id: NodeID) -> LinkContext {
+        LinkContext {
+            link_repository_id,
+            link_node_id,
+            parent_repository_id: RepositoryId::from([9; 16]),
+            link_state: Arc::new(State::new()),
+        }
+    }
+
+    /// A node change marks the links into the linked repository it is in, and
+    /// nothing when it is in the top-level repository, even for a link whose
+    /// target has the top-level repository's id.
+    #[tokio::test]
+    async fn only_a_node_change_in_a_linked_repository_marks_links() {
+        LORE_CONTEXT
+            .scope(setup_test_execution(), async {
+                let (immutable_store, mutable_store, _execution) =
+                    test_store_create().await.expect("making test stores");
+                let top_level = RepositoryContext::new_null_context(immutable_store, mutable_store);
+                let linked = top_level.to_link_context(RepositoryId::from([1; 16])).await;
+
+                let tracker = LinkTracker::new();
+                tracker.add_link(link(top_level.id, 10));
+                tracker.add_link(link(linked.id, 20));
+
+                tracker.on_node_changed(&top_level);
+                assert!(
+                    !tracker.has_modifications(),
+                    "a change in the top-level repository marked a link"
+                );
+
+                tracker.on_node_changed(&linked);
+                assert_eq!(
+                    tracker.get_links_needing_rehash(),
+                    vec![link(linked.id, 20)]
+                );
+            })
+            .await;
+    }
 }
