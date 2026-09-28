@@ -1316,7 +1316,7 @@ impl State {
             }
         }
 
-        Box::pin(async move { self.block_deserialize(repository, block_index).await }).await
+        Box::pin(self.block_deserialize(repository, block_index)).await
     }
 
     pub async fn try_block(
@@ -1333,7 +1333,7 @@ impl State {
             }
         }
 
-        Box::pin(async move { self.try_block_deserialize(repository, block_index).await }).await
+        Box::pin(self.try_block_deserialize(repository, block_index)).await
     }
 
     async fn try_block_deserialize(
@@ -4365,6 +4365,10 @@ impl State {
         self.runtime.write().rehash_node_names = true;
     }
 
+    /// The deprecated name table, loaded unless it is resident.
+    ///
+    /// Only the load is boxed, as in [`Self::block`]. Inline, it would make every node block load
+    /// larger, though only a version 0 block with external names reads the name table.
     pub async fn nametable(
         &self,
         repository: Arc<RepositoryContext>,
@@ -4376,6 +4380,14 @@ impl State {
             }
         }
 
+        Box::pin(self.nametable_load(repository)).await
+    }
+
+    /// Loads the deprecated name table for [`Self::nametable`] when it is not resident.
+    async fn nametable_load(
+        &self,
+        repository: Arc<RepositoryContext>,
+    ) -> Result<Arc<NameTable>, StateError> {
         let _permit = self
             .deserialize
             .acquire()

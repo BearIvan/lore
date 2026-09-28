@@ -2488,6 +2488,7 @@ mod block_single_flight {
     use lore_revision::immutable;
     use lore_revision::immutable::ReadFromImmutable;
     use lore_revision::interface::ExecutionContext;
+    use lore_revision::nametable::NameTable;
     use lore_revision::node::Node;
     use lore_revision::node::NodeFileMetadata;
     use lore_revision::node::NodeFileMetadataBlock;
@@ -2940,10 +2941,10 @@ mod block_single_flight {
             .await;
     }
 
-    /// Futures awaiting a tree or a state hold the tree lookup's or the state load's future, so
-    /// the store read each may make stays in a box of its own.
+    /// Futures awaiting a tree, a state or the deprecated name table hold the lookup's or the
+    /// load's future, so the store read each may make stays in a box of its own.
     #[tokio::test]
-    async fn tree_and_state_loads_keep_their_read_out_of_their_future() {
+    async fn tree_state_and_name_table_loads_keep_their_read_out_of_their_future() {
         LORE_CONTEXT
             .scope(setup_test_execution(), async {
                 let (immutable_store, mutable_store, _execution) =
@@ -2960,7 +2961,9 @@ mod block_single_flight {
                     Tree::read_from_immutable(repository.clone(), Address::default(), options);
                 let state_load = State::deserialize(repository.clone(), Hash::default());
                 let state_read =
-                    StateData::read_from_immutable(repository, Address::default(), options);
+                    StateData::read_from_immutable(repository.clone(), Address::default(), options);
+                let name_table = state.nametable(repository.clone());
+                let name_table_read = NameTable::deserialize(repository, Hash::default());
 
                 assert!(
                     size_of_val(&tree) < size_of_val(&tree_read),
@@ -2973,6 +2976,12 @@ mod block_single_flight {
                     "a state load holds {} bytes, its read {}",
                     size_of_val(&state_load),
                     size_of_val(&state_read)
+                );
+                assert!(
+                    size_of_val(&name_table) < size_of_val(&name_table_read),
+                    "a name table lookup holds {} bytes, its read {}",
+                    size_of_val(&name_table),
+                    size_of_val(&name_table_read)
                 );
             })
             .await;

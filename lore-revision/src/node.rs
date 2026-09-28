@@ -1369,7 +1369,7 @@ impl NodeBlock {
             return Ok(());
         }
 
-        Box::pin(async move { self.deserialize_nametable_impl(repository).await }).await
+        Box::pin(self.deserialize_nametable_impl(repository)).await
     }
 
     async fn deserialize_nametable_impl(
