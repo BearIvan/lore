@@ -5492,14 +5492,17 @@ pub enum NodeSource {
 /// Only [`FileAction::Delete`] and [`FileAction::Add`] walk the hierarchy under
 /// the change, so only they read a verdict. A caller emitting anything else owes
 /// none, and is spared the step it would take to produce one.
-async fn emit_change(
+///
+/// Returns [`add_change`]'s future itself: a future of its own would hold the
+/// arguments again beside it.
+fn emit_change(
     from: NodeChangeState,
     to: NodeChangeState,
     action: change::FileAction,
     measured: change::Flags,
     changes: &ChangeSender,
     filter_mode: FilterMode,
-) -> Result<(), StateError> {
+) -> impl Future<Output = Result<(), StateError>> {
     debug_assert!(
         !matches!(action, FileAction::Delete | FileAction::Add),
         "{action:?} walks the hierarchy and needs a verdict"
@@ -5513,7 +5516,6 @@ async fn emit_change(
         filter_mode,
         FilterStates::ROOT,
     )
-    .await
 }
 
 /// `states` is the filter's verdict for `path`, which the hierarchy walk below
@@ -5523,8 +5525,10 @@ async fn emit_change(
 /// modification walks the directory itself. The walk is boxed, one allocation per
 /// such directory: inline, it would make this future and every future above it
 /// larger.
-#[allow(clippy::too_many_arguments)]
-async fn add_change(
+///
+/// Not an `async fn`, which would hold a second copy of its arguments.
+#[allow(clippy::too_many_arguments, clippy::manual_async_fn)]
+fn add_change(
     from: NodeChangeState,
     to: NodeChangeState,
     action: change::FileAction,
@@ -5532,67 +5536,69 @@ async fn add_change(
     changes: &ChangeSender,
     filter_mode: FilterMode,
     states: FilterStates,
-) -> Result<(), StateError> {
-    // Avoid adding repository root node in case it was to/from an empty repository
-    if from.mapping.node != ROOT_NODE || to.mapping.node != ROOT_NODE {
-        // Determine which node to use and load it
-        let source = match (
-            from.mapping.node.is_valid_node_id(),
-            to.mapping.node.is_valid_node_id(),
-        ) {
-            (_, true) => NodeSource::To,
-            (true, false) => NodeSource::From,
-            (false, false) => NodeSource::Invalid,
-        };
-        // Determine if a different node should be used for early checking recursion.
-        let recursion_source = if action == change::FileAction::Delete {
-            Some(NodeSource::From)
-        } else {
-            None
-        };
+) -> impl Future<Output = Result<(), StateError>> {
+    async move {
+        // Avoid adding repository root node in case it was to/from an empty repository
+        if from.mapping.node != ROOT_NODE || to.mapping.node != ROOT_NODE {
+            // Determine which node to use and load it
+            let source = match (
+                from.mapping.node.is_valid_node_id(),
+                to.mapping.node.is_valid_node_id(),
+            ) {
+                (_, true) => NodeSource::To,
+                (true, false) => NodeSource::From,
+                (false, false) => NodeSource::Invalid,
+            };
+            // Determine if a different node should be used for early checking recursion.
+            let recursion_source = if action == change::FileAction::Delete {
+                Some(NodeSource::From)
+            } else {
+                None
+            };
 
-        // Only add (file system path not in merkle tree) should end up here for Invalid source
-        debug_assert!(source != NodeSource::Invalid || action == FileAction::Add);
+            // Only add (file system path not in merkle tree) should end up here for Invalid source
+            debug_assert!(source != NodeSource::Invalid || action == FileAction::Add);
 
-        let Some(node) = load_node_for_change(source, &from, &to).await else {
-            return Ok(());
-        };
-        let recursion_node_storage = if let Some(recursion_source) = recursion_source {
-            load_node_for_change(recursion_source, &from, &to).await
-        } else {
-            None
-        };
-        let recursion_node = recursion_node_storage.as_ref().unwrap_or(&node);
+            let Some(node) = load_node_for_change(source, &from, &to).await else {
+                return Ok(());
+            };
+            let recursion_node_storage = if let Some(recursion_source) = recursion_source {
+                load_node_for_change(recursion_source, &from, &to).await
+            } else {
+                None
+            };
+            let recursion_node = recursion_node_storage.as_ref().unwrap_or(&node);
 
-        // Compute flags and create change record
-        let flags = compute_change_flags(&node) | measured;
+            // Compute flags and create change record
+            let flags = compute_change_flags(&node) | measured;
 
-        emit(changes, || NodeChange {
-            action,
-            flags,
-            from: from.clone(),
-            to: to.clone(),
-        })
-        .await?;
+            emit(changes, || NodeChange {
+                action,
+                flags,
+                from: from.clone(),
+                to: to.clone(),
+            })
+            .await?;
 
-        if !recursion_node.is_directory() {
+            if !recursion_node.is_directory() {
+                return Ok(());
+            }
+        }
+
+        if !matches!(action, FileAction::Add | FileAction::Delete) {
             return Ok(());
         }
-    }
 
-    if !matches!(action, FileAction::Add | FileAction::Delete) {
-        return Ok(());
+        Box::pin(add_change_hierarchy(
+            from,
+            to,
+            action,
+            changes,
+            filter_mode,
+            states,
+        ))
+        .await
     }
-
-    Box::pin(add_change_hierarchy(
-        from,
-        to,
-        action,
-        changes,
-        filter_mode,
-        states,
-    ))
-    .await
 }
 
 /// Coalesce the add/delete pairs that name one file into moves.

@@ -6,8 +6,10 @@ use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 
 use bitflags::bitflags;
+use futures::future::Either;
 use lore_base::lore_spawn;
 use lore_error_set::prelude::*;
+use tokio::sync::OwnedSemaphorePermit;
 use tokio::sync::Semaphore;
 use tokio::task::JoinError;
 use tokio::task::JoinSet;
@@ -202,14 +204,18 @@ impl DiffWalkStats {
 /// [`DiffFlags`] are derived here rather than passed in. This is where the walk
 /// begins and where both sides' filters are in hand, so deriving them anywhere
 /// else would only be a second answer to the same question.
-pub async fn diff_subtree(
+///
+/// Returns [`diff_subtree_walk`]'s future itself, seeded when called, or a ready one
+/// where both sides drop `path`: a future of its own would hold the sides again
+/// beside the walk they are moved into.
+pub fn diff_subtree(
     from: NodeChangeState,
     to: NodeChangeState,
     path: RelativePath,
     graft: Option<Arc<GraftOracle>>,
     changes: &ChangeSender,
     filter_mode: FilterMode,
-) -> Result<DiffWalkStats, StateError> {
+) -> impl Future<Output = Result<DiffWalkStats, StateError>> {
     let from_filter = &from.mapping.repository.filter;
     let to_filter = &to.mapping.repository.filter;
     let flags = DiffFlags::between(from_filter, to_filter);
@@ -217,11 +223,11 @@ pub async fn diff_subtree(
         seed_sides(from_filter, to_filter, &path, flags, filter_mode);
     if excluded {
         lore_debug!("Excluded by filter: {}", path.as_str());
-        return Ok(DiffWalkStats::default());
+        return Either::Left(std::future::ready(Ok(DiffWalkStats::default())));
     }
 
     let depth = query_depth(path.as_lowercase_str());
-    diff_subtree_walk(
+    Either::Right(diff_subtree_walk(
         PendingSubtree {
             from,
             to,
@@ -239,10 +245,10 @@ pub async fn diff_subtree(
             graft,
         },
         flags,
-        changes,
+        changes.clone(),
         filter_mode,
-    )
-    .await
+        None,
+    ))
 }
 
 /// The verdicts a walk over `path` starts from, one per side, and whether the walk
@@ -363,11 +369,10 @@ fn dispatch_subtree_diff(
     };
     match subtree_task_semaphore().clone().try_acquire_owned() {
         Ok(permit) => {
-            let changes = changes.clone();
-            lore_spawn!(tasks, async move {
-                let _permit = permit;
-                diff_subtree_walk(subtree, flags, &changes, filter_mode).await
-            });
+            lore_spawn!(
+                tasks,
+                diff_subtree_walk(subtree, flags, changes.clone(), filter_mode, Some(permit))
+            );
         }
         Err(_) => pending.push(subtree),
     }
@@ -384,32 +389,42 @@ fn dispatch_subtree_diff(
 /// [`SubtreeWork::pending`], and this takes them one at a time. So a task's stack holds one
 /// directory, its tasks are bounded by the budget, and what grows with the tree is a queue of
 /// change states.
-async fn diff_subtree_walk(
+///
+/// `permit` is the budget a spawned walk holds until it has drained its tasks; the walk its
+/// caller awaits holds none. Not an `async fn`: the queue is made when called, so the future
+/// holds `first` once, in the queue.
+fn diff_subtree_walk(
     first: PendingSubtree,
     flags: DiffFlags,
-    changes: &ChangeSender,
+    changes: ChangeSender,
     filter_mode: FilterMode,
-) -> Result<DiffWalkStats, StateError> {
-    let stats = DiffWalkStats::default();
+    permit: Option<OwnedSemaphorePermit>,
+) -> impl Future<Output = Result<DiffWalkStats, StateError>> {
     let mut work = SubtreeWork {
         tasks: SubtreeTasks::new(),
         pending: vec![first],
     };
+    async move {
+        let stats = DiffWalkStats::default();
 
-    // Run the walk in a helper so any `?` early-out still hits the
-    // drain below — otherwise the JoinSet drops with subtree-diff
-    // tasks still running, leaking the Arc<RepositoryContext> clones.
-    let work_result = walk_pending_subtrees(&mut work, flags, changes, filter_mode, &stats).await;
-    let drain_result = lore_drain_tasks!(work.tasks, StateError::internal("Task failure"));
-    work_result?;
-    drain_result?;
-    Ok(stats)
+        // Run the walk in a helper so any `?` early-out still hits the
+        // drain below — otherwise the JoinSet drops with subtree-diff
+        // tasks still running, leaking the Arc<RepositoryContext> clones.
+        let work_result =
+            walk_pending_subtrees(&mut work, flags, &changes, filter_mode, &stats).await;
+        let drain_result = lore_drain_tasks!(work.tasks, StateError::internal("Task failure"));
+        drop(permit);
+        work_result?;
+        drain_result?;
+        Ok(stats)
+    }
 }
 
 /// Walks every queued subtree, and every subtree they queue, then joins the tasks they spawned.
 ///
 /// Each directory's future is awaited in place, so the directories one task walks reuse the task's
-/// own allocation rather than taking a box apiece.
+/// own allocation rather than taking a box apiece. The queue is popped by a `let`-`else` rather
+/// than a `while let`, whose scrutinee would stay reserved beside the directory's future.
 async fn walk_pending_subtrees(
     work: &mut SubtreeWork,
     flags: DiffFlags,
@@ -417,7 +432,10 @@ async fn walk_pending_subtrees(
     filter_mode: FilterMode,
     stats: &DiffWalkStats,
 ) -> Result<(), StateError> {
-    while let Some(subtree) = work.pending.pop() {
+    loop {
+        let Some(subtree) = work.pending.pop() else {
+            break;
+        };
         diff_subtree_node(subtree, flags, changes, filter_mode, work, stats).await?;
     }
     while let Some(joined) = work.tasks.join_next().await {
@@ -494,44 +512,48 @@ impl DiffCursor {
 
 /// Emits the changes between the two nodes `subtree` stands at, and queues in `work` what
 /// descending below them needs.
-async fn diff_subtree_node(
+///
+/// Not an `async fn`: `subtree` is taken apart when called, so the future holds its parts
+/// once rather than the subtree beside them.
+fn diff_subtree_node(
     subtree: PendingSubtree,
     flags: DiffFlags,
     changes: &ChangeSender,
     filter_mode: FilterMode,
     work: &mut SubtreeWork,
     stats: &DiffWalkStats,
-) -> Result<(), StateError> {
+) -> impl Future<Output = Result<(), StateError>> {
     let PendingSubtree {
         from,
         to,
         mut cursor,
         graft,
     } = subtree;
-    // If path is a file then treat this as a call for the parent with only one child.
-    let (from_nodes, to_nodes, popped) =
-        find_sorted_children(&mut cursor.paths, &from, &to).await?;
-    if popped {
-        cursor.reseed(&from, &to);
-    }
-    let DiffCursor { paths, states } = cursor;
+    async move {
+        // If path is a file then treat this as a call for the parent with only one child.
+        let (from_nodes, to_nodes, popped) =
+            find_sorted_children(&mut cursor.paths, &from, &to).await?;
+        if popped {
+            cursor.reseed(&from, &to);
+        }
 
-    stats.entered();
-    diff_subtree_node_walk(
-        &from,
-        &to,
-        &paths,
-        states,
-        flags,
-        graft,
-        changes,
-        filter_mode,
-        &from_nodes,
-        &to_nodes,
-        work,
-        stats,
-    )
-    .await
+        stats.entered();
+        diff_subtree_node_walk(
+            &from,
+            &to,
+            &cursor.paths,
+            cursor.states,
+            flags,
+            graft,
+            changes,
+            filter_mode,
+            &from_nodes,
+            &to_nodes,
+            work,
+            stats,
+        )
+        .await
+    }
 }
 
 /// Walk paired/solo from/to children, dispatching paired-node diffs through
@@ -541,8 +563,10 @@ async fn diff_subtree_node(
 /// 1. In `to_nodes` but not `from_nodes` → Added or Moved.
 /// 2. In `from_nodes` but not `to_nodes` → Deleted or was Moved.
 /// 3. In both → Modified, case-only rename, or unchanged.
-#[allow(clippy::too_many_arguments)]
-async fn diff_subtree_node_walk(
+///
+/// Not an `async fn`, which would hold a second copy of its arguments.
+#[allow(clippy::too_many_arguments, clippy::manual_async_fn)]
+fn diff_subtree_node_walk(
     from: &NodeChangeState,
     to: &NodeChangeState,
     paths: &DiffPaths,
@@ -555,72 +579,74 @@ async fn diff_subtree_node_walk(
     to_nodes: &StateChildrenNodes,
     work: &mut SubtreeWork,
     stats: &DiffWalkStats,
-) -> Result<(), StateError> {
-    let context = DiffContext {
-        changes,
-        from_nodes,
-        to_nodes,
-        paths,
-        states,
-        filter_mode,
-        stats,
-    };
-    let mut to_index = 0;
-    for from_named_node in from_nodes.children.iter() {
-        stats.queried();
-        let Some((from_node_search, from_node_states)) = get_filtered_node_and_path(
+) -> impl Future<Output = Result<(), StateError>> {
+    async move {
+        let context = DiffContext {
+            changes,
             from_nodes,
-            from_named_node.node,
-            &paths.from,
-            states.from,
+            to_nodes,
+            paths,
+            states,
             filter_mode,
-        )
-        .await?
-        else {
-            continue;
+            stats,
         };
-
-        while to_index < to_nodes.children.len()
-            && to_nodes.children[to_index].name < from_named_node.name
-        {
-            add_change_for_solo_to_node(context, from, to_index).await?;
-            to_index += 1;
-        }
-
-        if to_index >= to_nodes.children.len()
-            || to_nodes.children[to_index].name > from_named_node.name
-        {
-            add_change_for_solo_from_node(
-                context,
-                from_named_node,
-                to,
-                &from_node_search,
-                from_node_states,
-            )
-            .await?;
-        } else {
-            let to_named_node = &to_nodes.children[to_index];
-            to_index += 1;
-
-            add_change_for_paired_nodes(
-                work,
-                flags,
-                graft.clone(),
-                context,
-                to_named_node,
+        let mut to_index = 0;
+        for from_named_node in from_nodes.children.iter() {
+            stats.queried();
+            let Some((from_node_search, from_node_states)) = get_filtered_node_and_path(
+                from_nodes,
                 from_named_node.node,
-                &from_node_search,
-                from_node_states,
+                &paths.from,
+                states.from,
+                filter_mode,
             )
-            .await?;
+            .await?
+            else {
+                continue;
+            };
+
+            while to_index < to_nodes.children.len()
+                && to_nodes.children[to_index].name < from_named_node.name
+            {
+                add_change_for_solo_to_node(context, from, to_index).await?;
+                to_index += 1;
+            }
+
+            if to_index >= to_nodes.children.len()
+                || to_nodes.children[to_index].name > from_named_node.name
+            {
+                add_change_for_solo_from_node(
+                    context,
+                    from_named_node,
+                    to,
+                    &from_node_search,
+                    from_node_states,
+                )
+                .await?;
+            } else {
+                let to_named_node = &to_nodes.children[to_index];
+                to_index += 1;
+
+                add_change_for_paired_nodes(
+                    work,
+                    flags,
+                    graft.clone(),
+                    context,
+                    to_named_node,
+                    from_named_node.node,
+                    &from_node_search,
+                    from_node_states,
+                )
+                .await?;
+            }
         }
-    }
 
-    for to_index in to_index..to_nodes.children.len() {
-        add_change_for_solo_to_node(context, from, to_index).await?;
-    }
+        for to_index in to_index..to_nodes.children.len() {
+            add_change_for_solo_to_node(context, from, to_index).await?;
+        }
 
-    Ok(())
+        Ok(())
+    }
 }
 
 /// What every child of one directory is reported against: where the walk stands, what it
@@ -1920,6 +1946,74 @@ mod tests {
                     spawned.0.contains(&("M".to_string(), true, deepest_file())),
                     "the one file the two states address differently must be the one reported \
                      with its content changed"
+                );
+            })
+            .await;
+    }
+
+    /// A subtree is held once on its way down a walk: in the walk's queue, and then taken apart
+    /// by the directory walking it, never again beside either.
+    #[tokio::test]
+    async fn a_walk_holds_each_subtree_once() {
+        let execution = crate::fs::filesystem_provider::tests::setup_test_execution();
+        lore_base::runtime::LORE_CONTEXT
+            .scope(execution, async {
+                let repository = walk_repository().await;
+                let side = NodeChangeState {
+                    mapping: NodeMapping {
+                        repository,
+                        state: State::new(),
+                        path: RelativePath::new(),
+                        node: 0,
+                    },
+                    observed: None,
+                    flags: NodeFlags::NoFlags,
+                    address: Address::default(),
+                    mode: 0,
+                };
+                let subtree = || PendingSubtree {
+                    from: side.clone(),
+                    to: side.clone(),
+                    cursor: DiffCursor {
+                        paths: DiffPaths {
+                            from: RelativePath::new(),
+                            to: RelativePath::new(),
+                            depth: 0,
+                        },
+                        states: DiffStates {
+                            from: FilterStates::ROOT,
+                            to: FilterStates::ROOT,
+                        },
+                    },
+                    graft: None,
+                };
+                let (changes, _receiver) = tokio::sync::mpsc::channel(1);
+                let stats = DiffWalkStats::default();
+                let mut work = SubtreeWork {
+                    tasks: SubtreeTasks::new(),
+                    pending: Vec::new(),
+                };
+                let mut queue = SubtreeWork {
+                    tasks: SubtreeTasks::new(),
+                    pending: Vec::new(),
+                };
+                let flags = DiffFlags::empty();
+                let mode = FilterMode::Full;
+
+                let directory =
+                    diff_subtree_node(subtree(), flags, &changes, mode, &mut work, &stats);
+                let pending = walk_pending_subtrees(&mut queue, flags, &changes, mode, &stats);
+                let (directory, pending) = (size_of_val(&directory), size_of_val(&pending));
+                let walk = diff_subtree_walk(subtree(), flags, changes.clone(), mode, None);
+
+                assert!(
+                    pending < directory + size_of::<PendingSubtree>(),
+                    "the queue loop holds {pending} bytes, the directory it walks {directory}"
+                );
+                assert!(
+                    size_of_val(&walk) < pending + size_of::<PendingSubtree>(),
+                    "the walk holds {} bytes, the queue loop {pending}",
+                    size_of_val(&walk)
                 );
             })
             .await;
