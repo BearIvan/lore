@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Epic Games, Inc.
 // SPDX-License-Identifier: MIT
+use std::future::Future;
 use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
@@ -395,16 +396,16 @@ async fn walk_leaf_level(
             continue;
         };
 
-        let leaf = LeafReference {
+        let Ok(slot) = leaf_tx.reserve().await else {
+            break;
+        };
+        slot.send(LeafReference {
             hash: frag_ref.hash,
             target_offset: entry.start + clip.start - window.start,
             expected_size: expected_content_size,
             clip,
             context,
-        };
-        if leaf_tx.send(leaf).await.is_err() {
-            break;
-        }
+        });
     }
     Ok(())
 }
@@ -815,16 +816,21 @@ async fn reserve_leaf_budget<T>(
 
 /// Hands a payload to the caller, reporting whether the caller has gone.
 ///
-/// A send that fails means the receiver is gone: a content comparison that has already found a
-/// difference, a reader that stopped early. That is not a failure of this pipeline, and there
-/// is nobody left to report one to, so it is reported as abandonment rather than as an error.
-/// The permit is released here rather than at load, so the budget bounds the pipeline.
+/// A slot that cannot be reserved means the receiver is gone: a content comparison that has
+/// already found a difference, a reader that stopped early. That is not a failure of this
+/// pipeline, and there is nobody left to report one to, so it is reported as abandonment rather
+/// than as an error. The permit is released here rather than at load, so the budget bounds the
+/// pipeline.
 async fn send_payload(
     sender: &Sender<Result<Bytes, StorageError>>,
     buffer: Bytes,
     permit: SemaphorePermit<'static>,
 ) -> bool {
-    let abandoned = sender.send(Ok(buffer)).await.is_err();
+    let abandoned = sender
+        .reserve()
+        .await
+        .map(|slot| slot.send(Ok(buffer)))
+        .is_err();
     drop(permit);
     abandoned
 }
@@ -849,14 +855,17 @@ async fn send_to_sink(sender: &DataSender, message: DataMessage) {
 /// caller's channel, so the fragment budget bounds what the pipeline holds even when the
 /// caller consumes slowly. The fetch is one task per leaf, awaited in list order, which is
 /// what makes the output a stream rather than positional writes.
-async fn fetch_ordered_and_stream(
+///
+/// Returns [`fetch_ordered_and_stream_from`]'s future itself: a future of its own would hold the
+/// arguments again beside it.
+fn fetch_ordered_and_stream(
     store: Arc<dyn ImmutableStore>,
     partition: Partition,
     leaf_rx: Receiver<LeafReference>,
     sender: Sender<Result<Bytes, StorageError>>,
     options: ReadOptions,
     remote_session: Option<Arc<StorageSession>>,
-) -> Result<(), StorageError> {
+) -> impl Future<Output = Result<(), StorageError>> {
     fetch_ordered_and_stream_from(
         fragment_limiter(),
         store,
@@ -866,7 +875,6 @@ async fn fetch_ordered_and_stream(
         options,
         remote_session,
     )
-    .await
 }
 
 async fn fetch_ordered_and_stream_from(
@@ -2220,6 +2228,24 @@ mod tests {
             assert!(
                 permit.is_none(),
                 "a reservation for a queue that has closed must hand back no budget to spend"
+            );
+        }
+
+        /// Handing a payload over holds less than a send of it: it waits for a channel slot and
+        /// then sends, so no send future holds the payload across the wait.
+        #[test]
+        fn a_payload_handover_holds_less_than_a_send() {
+            let budget: &'static Semaphore = Box::leak(Box::new(Semaphore::new(1)));
+            let permit = budget.try_acquire().expect("an idle budget has a permit");
+            let (sender, _receiver) = channel::<Result<Bytes, StorageError>>(1);
+
+            let handover = send_payload(&sender, Bytes::new(), permit);
+            let send = sender.send(Ok(Bytes::new()));
+            assert!(
+                size_of_val(&handover) < size_of_val(&send),
+                "handing a payload over holds {} bytes, a send of it {}",
+                size_of_val(&handover),
+                size_of_val(&send)
             );
         }
 
