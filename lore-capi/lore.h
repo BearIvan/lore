@@ -5044,6 +5044,12 @@ typedef struct lore_shared_store_info_args_t {
   int _unused;
 } lore_shared_store_info_args_t;
 
+// Arguments for listing the registry of shared stores.
+typedef struct lore_shared_store_list_args_t {
+  // Whether to load each shared store to search for each instance using it.
+  uint8_t include_instances;
+} lore_shared_store_list_args_t;
+
 // Arguments for setting whether to automatically use the shared store.
 typedef struct lore_shared_store_set_use_automatically_args_t {
   // Automatically use the shared store
@@ -11157,6 +11163,58 @@ int32_t lore_shared_store_info(const struct lore_global_args_t *globals,
 // | `LORE_EVENT_SHARED_STORE_INFO` | `lore_shared_store_info_event_data_t` | Emitted on success carrying the path of the configured default shared store |
 void lore_shared_store_info_async(const struct lore_global_args_t *globals,
                                   const struct lore_shared_store_info_args_t *args,
+                                  struct lore_event_callback_config_t callback);
+
+// List every registered shared store.
+//
+// # Events
+//
+// Events are delivered via the callback as `lore_event_t`. Use the `tag` field to identify the event type.
+//
+// ## Standard Events
+//
+// These events are emitted by all interface functions:
+//
+// | Tag | Data Type | Description |
+// |-----|-----------|-------------|
+// | `LORE_EVENT_LOG` | `lore_log_event_data_t` | Diagnostic messages throughout execution |
+// | `LORE_EVENT_ERROR` | `lore_error_event_data_t` | Emitted for a non-fatal error during the operation |
+// | `LORE_EVENT_COMPLETE` | `lore_complete_event_data_t` | Always emitted at the end; `status` is `0` on success or the error code on failure |
+// | `LORE_EVENT_END` | `lore_end_event_data_t` | Always emitted after `COMPLETE` to signal callback termination |
+//
+// ## Shared Store Events
+//
+// | Tag | Data Type | Description |
+// |-----|-----------|-------------|
+// | `LORE_EVENT_SHARED_STORE_LIST` | `lore_shared_store_list_event_data_t` | Emitted on success carrying every registered shared store, and the instances using each when `include_instances` is set |
+int32_t lore_shared_store_list(const struct lore_global_args_t *globals,
+                               const struct lore_shared_store_list_args_t *args,
+                               struct lore_event_callback_config_t callback);
+
+// List every registered shared store (async).
+//
+// # Events
+//
+// Events are delivered via the callback as `lore_event_t`. Use the `tag` field to identify the event type.
+//
+// ## Standard Events
+//
+// These events are emitted by all interface functions:
+//
+// | Tag | Data Type | Description |
+// |-----|-----------|-------------|
+// | `LORE_EVENT_LOG` | `lore_log_event_data_t` | Diagnostic messages throughout execution |
+// | `LORE_EVENT_ERROR` | `lore_error_event_data_t` | Emitted for a non-fatal error during the operation |
+// | `LORE_EVENT_COMPLETE` | `lore_complete_event_data_t` | Always emitted at the end; `status` is `0` on success or the error code on failure |
+// | `LORE_EVENT_END` | `lore_end_event_data_t` | Always emitted after `COMPLETE` to signal callback termination |
+//
+// ## Shared Store Events
+//
+// | Tag | Data Type | Description |
+// |-----|-----------|-------------|
+// | `LORE_EVENT_SHARED_STORE_LIST` | `lore_shared_store_list_event_data_t` | Emitted on success carrying every registered shared store, and the instances using each when `include_instances` is set |
+void lore_shared_store_list_async(const struct lore_global_args_t *globals,
+                                  const struct lore_shared_store_list_args_t *args,
                                   struct lore_event_callback_config_t callback);
 
 // Set whether to automatically use the shared store.

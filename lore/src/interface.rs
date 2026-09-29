@@ -6313,6 +6313,70 @@ pub extern "C" fn lore_shared_store_info_async(
     run_asynchronously(globals, args, callback, dispatch_command);
 }
 
+pub type LoreSharedStoreListArgs = crate::shared_store::LoreSharedStoreListArgs;
+
+/// List every registered shared store.
+///
+/// # Events
+///
+/// Events are delivered via the callback as `lore_event_t`. Use the `tag` field to identify the event type.
+///
+/// ## Standard Events
+///
+/// These events are emitted by all interface functions:
+///
+/// | Tag | Data Type | Description |
+/// |-----|-----------|-------------|
+/// | `LORE_EVENT_LOG` | `lore_log_event_data_t` | Diagnostic messages throughout execution |
+/// | `LORE_EVENT_ERROR` | `lore_error_event_data_t` | Emitted for a non-fatal error during the operation |
+/// | `LORE_EVENT_COMPLETE` | `lore_complete_event_data_t` | Always emitted at the end; `status` is `0` on success or the error code on failure |
+/// | `LORE_EVENT_END` | `lore_end_event_data_t` | Always emitted after `COMPLETE` to signal callback termination |
+///
+/// ## Shared Store Events
+///
+/// | Tag | Data Type | Description |
+/// |-----|-----------|-------------|
+/// | `LORE_EVENT_SHARED_STORE_LIST` | `lore_shared_store_list_event_data_t` | Emitted on success carrying every registered shared store, and the instances using each when `include_instances` is set |
+#[unsafe(no_mangle)]
+pub extern "C" fn lore_shared_store_list(
+    globals: &LoreGlobalArgs,
+    args: &LoreSharedStoreListArgs,
+    callback: LoreEventCallbackConfig,
+) -> i32 {
+    run_synchronously(globals, args, callback, run_command)
+}
+
+/// List every registered shared store (async).
+///
+/// # Events
+///
+/// Events are delivered via the callback as `lore_event_t`. Use the `tag` field to identify the event type.
+///
+/// ## Standard Events
+///
+/// These events are emitted by all interface functions:
+///
+/// | Tag | Data Type | Description |
+/// |-----|-----------|-------------|
+/// | `LORE_EVENT_LOG` | `lore_log_event_data_t` | Diagnostic messages throughout execution |
+/// | `LORE_EVENT_ERROR` | `lore_error_event_data_t` | Emitted for a non-fatal error during the operation |
+/// | `LORE_EVENT_COMPLETE` | `lore_complete_event_data_t` | Always emitted at the end; `status` is `0` on success or the error code on failure |
+/// | `LORE_EVENT_END` | `lore_end_event_data_t` | Always emitted after `COMPLETE` to signal callback termination |
+///
+/// ## Shared Store Events
+///
+/// | Tag | Data Type | Description |
+/// |-----|-----------|-------------|
+/// | `LORE_EVENT_SHARED_STORE_LIST` | `lore_shared_store_list_event_data_t` | Emitted on success carrying every registered shared store, and the instances using each when `include_instances` is set |
+#[unsafe(no_mangle)]
+pub extern "C" fn lore_shared_store_list_async(
+    globals: &LoreGlobalArgs,
+    args: &LoreSharedStoreListArgs,
+    callback: LoreEventCallbackConfig,
+) {
+    run_asynchronously(globals, args, callback, dispatch_command);
+}
+
 pub type LoreSharedStoreSetUseAutomaticallyArgs =
     crate::shared_store::LoreSharedStoreSetUseAutomaticallyArgs;
 

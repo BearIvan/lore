@@ -32,6 +32,7 @@ mod tests {
     use lore::service::LoreServiceSetUseAutomaticallyArgs;
     use lore::service::LoreServiceStartArgs;
     use lore::service::LoreServiceStopArgs;
+    use lore::shared_store::LoreSharedStoreListArgs;
     use lore_base::error::ServiceUnavailable;
     use lore_error_set::FfiError;
     use lore_revision::interface::LoreGlobalArgs;
@@ -288,6 +289,32 @@ mod tests {
             assert_eq!(set_use_automatically(false).await, 0);
             assert!(!lore::will_use_service());
         });
+    }
+
+    /// `lore_shared_store_list` decides at the entry whether to relay, so with
+    /// relaying on it goes to the service rather than reading the registry here.
+    ///
+    /// No service can be reached, and the registry here is empty, so a call that
+    /// ran here would succeed.
+    #[test]
+    #[serial]
+    fn the_shared_store_list_entry_point_relays_to_the_service() {
+        let settings = machine_settings("service-api-shared-store-list-");
+        let missing = settings.path().join("no-such-lore");
+        lore::runtime().block_on(async {
+            assert_eq!(set_use_automatically(true).await, 0);
+            assert_eq!(set_executable(&missing.to_string_lossy()).await, 0);
+        });
+
+        assert_eq!(
+            lore::interface::lore_shared_store_list(
+                &globals(),
+                &LoreSharedStoreListArgs::default(),
+                no_callback()
+            ),
+            unavailable_code(),
+            "the entry point must relay the call rather than run it here"
+        );
     }
 
     /// A relayed call that reaches no service fails with the code that says so,

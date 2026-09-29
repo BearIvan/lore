@@ -168,7 +168,7 @@ async fn info_local(
 #[repr(C)]
 #[derive(Debug, Clone, PartialEq, Default, Deserialize, Serialize, LoreArgs)]
 #[handler(list_local)]
-/// Arguments for listing the registry of shared stores (no parameters).
+/// Arguments for listing the registry of shared stores.
 pub struct LoreSharedStoreListArgs {
     /// Whether to load each shared store to search for each instance using it.
     pub include_instances: u8,
@@ -193,7 +193,7 @@ pub struct LoreSharedStoreListArgs {
 ///
 /// | Event | Description |
 /// |-------|-------------|
-/// | [`LoreEvent::SharedStoreList`](crate::interface::LoreEvent::SharedStoreList) | Emitted on success with the path of the configured default shared store |
+/// | [`LoreEvent::SharedStoreList`](crate::interface::LoreEvent::SharedStoreList) | Emitted on success with every registered shared store, and the instances using each when `include_instances` is set |
 pub async fn list(
     globals: LoreGlobalArgs,
     args: LoreSharedStoreListArgs,

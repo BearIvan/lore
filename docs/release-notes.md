@@ -25,6 +25,7 @@ Release notes for the open source Lore project. Releases before v0.8.4 predate t
 - C API: `lore_repository_delete` and `lore_repository_delete_async` delete a remote repository, and are carried out by the Lore service when one is in use. `lore repository delete` is relayed the same way, where it previously always ran in the calling process
 - `lore-proto`: introduces `lore.user.v1.UserService`, the user directory in Lore's own terms: `UserGet` resolves user IDs to users, `UserFind` resolves a name to a user, and `PartitionList` streams the partitions the caller is allowed to see. These take over what `GetUserInfo`, `GetUserId` and `LookupUserPermissions` did in `UrcAuthApi`. Only the pure OIDC-compliant authn/authz operations are left in `UrcAuthApi` so that we can use OIDC authorization as a drop-in replacement for the Auth API.
 - `lore-server`: `[server.auth] jwt_typ` lists the accepted JWT `typ` header values, as a string or an array. When set, a token whose header carries no `typ`, or a `typ` that doesn't match any of the entries, is rejected. If unset, the token `typ` value is not checked, as before
+- C API: `lore_shared_store_list` and `lore_shared_store_list_async` list the registered shared stores and, when asked, the instances using each, as `lore shared-store list` does
 
 ### Fixes & Improvements
 

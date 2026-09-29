@@ -578,3 +578,37 @@ async fn revision_sync_args_survive_the_wire() {
         }
     }
 }
+
+/// A shared store listing routed through a service carries whether to look up the instances using
+/// each store, which decides whether the service loads every store it lists.
+#[tokio::test]
+async fn shared_store_list_args_survive_the_wire() {
+    use lore::shared_store::LoreSharedStoreListArgs;
+
+    let args = LoreSharedStoreListArgs {
+        include_instances: 1,
+    };
+
+    for (serialization, label) in [
+        (SerializationType::Json, "json"),
+        (SerializationType::Bincode, "bincode"),
+    ] {
+        let message = MessageToServer {
+            globals: LoreGlobalArgs::default(),
+            command: LoreCommand::SharedStoreList(args.clone()),
+        };
+        let message_bytes = write_v1_message(message, serialization).unwrap();
+        let processed: Result<Option<(V1Header, MessageToServer)>, MessageError> =
+            blocking_read_v1_message(&mut message_bytes.as_slice());
+        let processed = processed
+            .unwrap_or_else(|error| panic!("{label} must read back: {error:?}"))
+            .expect("a whole message must be present");
+
+        match processed.1.command {
+            LoreCommand::SharedStoreList(read_back) => {
+                assert_eq!(read_back, args, "{label} must carry every field unchanged");
+            }
+            other => panic!("Unexpected command: {other:?}"),
+        }
+    }
+}
