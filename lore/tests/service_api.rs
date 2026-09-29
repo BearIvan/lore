@@ -22,6 +22,7 @@ mod tests {
     use std::sync::Arc;
     use std::sync::LazyLock;
     use std::sync::Mutex;
+    use std::sync::mpsc;
     use std::time::Duration;
     use std::time::Instant;
 
@@ -37,6 +38,7 @@ mod tests {
     use lore::shared_store::LoreSharedStoreListArgs;
     use lore_base::error::ServiceUnavailable;
     use lore_error_set::FfiError;
+    use lore_revision::interface::LoreEventCallbackConfig;
     use lore_revision::interface::LoreGlobalArgs;
     use rand::distr::Alphanumeric;
     use rand::distr::SampleString;
@@ -170,29 +172,108 @@ mod tests {
         .ffi_code()
     }
 
-    /// Collects the failure messages a call reports, so a test can assert on
-    /// what a reader is told and not only on the code they branch on.
-    ///
-    /// A local call reports through the detail on its `Complete` event; a routed
-    /// one also emits `Error`. Both are collected, so the text reads the same
-    /// either way.
+    /// Collects the failure message a call reports on its `Complete` event, so a
+    /// test can assert on what a reader is told and not only on the code they
+    /// branch on.
     fn capturing() -> (Arc<Mutex<Vec<String>>>, LoreEventCallback) {
         let collected: Arc<Mutex<Vec<String>>> = Arc::default();
         let recorder = Arc::clone(&collected);
         let callback: LoreEventCallback = Some(Box::new(move |event: &LoreEvent| {
-            let message = match event {
-                LoreEvent::Error(data) => data.error_inner.to_string(),
-                LoreEvent::Complete(data) => data.error.message.to_string(),
-                _ => return,
-            };
-            if !message.is_empty() {
+            if let LoreEvent::Complete(data) = event
+                && !data.error.message.is_empty()
+            {
                 recorder
                     .lock()
                     .expect("the collector lock is not poisoned")
-                    .push(message);
+                    .push(data.error.message.to_string());
             }
         }));
         (collected, callback)
+    }
+
+    /// An event a C callback received, reduced to what a caller reads from it.
+    #[derive(Debug, PartialEq)]
+    enum Delivered {
+        Error,
+        Complete {
+            status: i32,
+            error_code: i32,
+            has_message: bool,
+            has_trace: bool,
+        },
+        End,
+    }
+
+    /// Where [`record`] sends what it receives. Set by [`delivered`], which the
+    /// `#[serial]` lock every test here holds keeps to one caller at a time.
+    static RECORDED: Mutex<Option<mpsc::Sender<Delivered>>> = Mutex::new(None);
+
+    unsafe extern "C" fn record(event: &LoreEvent, _user_context: u64) {
+        let delivered = match event {
+            LoreEvent::Error(_) => Delivered::Error,
+            LoreEvent::Complete(data) => Delivered::Complete {
+                status: data.status,
+                error_code: data.error.error_code,
+                has_message: !data.error.message.is_empty(),
+                has_trace: !data.error.trace_locations.as_slice().is_empty(),
+            },
+            LoreEvent::End(_) => Delivered::End,
+            _ => return,
+        };
+        if let Some(sender) = RECORDED
+            .lock()
+            .expect("the sender lock is not poisoned")
+            .as_ref()
+        {
+            let _ = sender.send(delivered);
+        }
+    }
+
+    /// Runs `call` with a C callback and returns what the callback received, up
+    /// to and including `End`.
+    fn delivered(call: impl FnOnce(LoreEventCallbackConfig)) -> Vec<Delivered> {
+        let (sender, receiver) = mpsc::channel();
+        *RECORDED.lock().expect("the sender lock is not poisoned") = Some(sender);
+        call(LoreEventCallbackConfig {
+            user_context: 0,
+            func: Some(record),
+        });
+
+        let mut received = Vec::new();
+        while received.last() != Some(&Delivered::End) {
+            received.push(
+                receiver
+                    .recv_timeout(Duration::from_secs(30))
+                    .expect("every call ends with an End event"),
+            );
+        }
+        received
+    }
+
+    /// What a call that failed with `code` delivers: one `Complete` carrying the
+    /// code and the detail, then `End`.
+    fn failed_with(code: i32) -> [Delivered; 2] {
+        [
+            Delivered::Complete {
+                status: code,
+                error_code: code,
+                has_message: true,
+                has_trace: true,
+            },
+            Delivered::End,
+        ]
+    }
+
+    /// Turns relaying on and names an executable that does not exist, so a
+    /// relayed call reaches no service and none is started.
+    fn relaying_to_no_service(prefix: &str) -> TempDir {
+        let settings = machine_settings(prefix);
+        let missing = settings.path().join("no-such-lore");
+        lore::runtime().block_on(async {
+            assert_eq!(set_use_automatically(true).await, 0);
+            assert_eq!(set_executable(&missing.to_string_lossy()).await, 0);
+        });
+        settings
     }
 
     /// An executable that exits at once rather than listening, which is what a
@@ -459,5 +540,44 @@ mod tests {
             reported.contains("no-such-lore"),
             "the failure must name the executable it could not start: {reported}"
         );
+    }
+
+    /// A relayed call that reaches no service reports as a failing command does:
+    /// the code on the return value and on one `Complete` carrying the detail,
+    /// then `End`, with no legacy `Error` event.
+    #[test]
+    #[serial]
+    fn a_relayed_call_that_reaches_no_service_completes_with_the_failure() {
+        let _settings = relaying_to_no_service("service-api-relay-complete-");
+
+        let mut status = 0;
+        let received = delivered(|callback| {
+            status = lore::interface::lore_revision_info(
+                &globals(),
+                &lore::revision::LoreRevisionInfoArgs::default(),
+                callback,
+            );
+        });
+
+        assert_eq!(received, failed_with(unavailable_code()));
+        assert_eq!(status, unavailable_code(), "the return value is the status");
+    }
+
+    /// The asynchronous entry point returns nothing, so `Complete` is the only
+    /// place a relayed call's failure reaches its caller.
+    #[test]
+    #[serial]
+    fn an_asynchronous_relayed_call_that_reaches_no_service_completes_with_the_failure() {
+        let _settings = relaying_to_no_service("service-api-relay-complete-async-");
+
+        let received = delivered(|callback| {
+            lore::interface::lore_revision_info_async(
+                &globals(),
+                &lore::revision::LoreRevisionInfoArgs::default(),
+                callback,
+            );
+        });
+
+        assert_eq!(received, failed_with(unavailable_code()));
     }
 }
