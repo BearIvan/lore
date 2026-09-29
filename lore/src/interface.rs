@@ -1628,6 +1628,70 @@ pub extern "C" fn lore_branch_reset_async(
     run_asynchronously(globals, args, callback, dispatch_command);
 }
 
+pub type LoreBranchLatestListArgs = crate::branch::LoreBranchLatestListArgs;
+
+/// List the revisions the LATEST of a branch has held, most recent first.
+///
+/// # Events
+///
+/// Events are delivered via the callback as `lore_event_t`. Use the `tag` field to identify the event type.
+///
+/// ## Standard Events
+///
+/// These events are emitted by all interface functions:
+///
+/// | Tag | Data Type | Description |
+/// |-----|-----------|-------------|
+/// | `LORE_EVENT_LOG` | `lore_log_event_data_t` | Diagnostic messages throughout execution |
+/// | `LORE_EVENT_ERROR` | `lore_error_event_data_t` | Emitted for a non-fatal error during the operation |
+/// | `LORE_EVENT_COMPLETE` | `lore_complete_event_data_t` | Always emitted at the end; `status` is `0` on success or the error code on failure |
+/// | `LORE_EVENT_END` | `lore_end_event_data_t` | Always emitted after `COMPLETE` to signal callback termination |
+///
+/// ## Branch Events
+///
+/// | Tag | Data Type | Description |
+/// |-----|-----------|-------------|
+/// | `LORE_EVENT_BRANCH_LATEST_LIST_ENTRY` | `lore_branch_latest_list_entry_event_data_t` | Emitted for each revision the branch LATEST has held, most recent first |
+#[unsafe(no_mangle)]
+pub extern "C" fn lore_branch_latest_list(
+    globals: &LoreGlobalArgs,
+    args: &LoreBranchLatestListArgs,
+    callback: LoreEventCallbackConfig,
+) -> i32 {
+    run_synchronously(globals, args, callback, run_command)
+}
+
+/// Asynchronous version of `lore_branch_latest_list`.
+///
+/// # Events
+///
+/// Events are delivered via the callback as `lore_event_t`. Use the `tag` field to identify the event type.
+///
+/// ## Standard Events
+///
+/// These events are emitted by all interface functions:
+///
+/// | Tag | Data Type | Description |
+/// |-----|-----------|-------------|
+/// | `LORE_EVENT_LOG` | `lore_log_event_data_t` | Diagnostic messages throughout execution |
+/// | `LORE_EVENT_ERROR` | `lore_error_event_data_t` | Emitted for a non-fatal error during the operation |
+/// | `LORE_EVENT_COMPLETE` | `lore_complete_event_data_t` | Always emitted at the end; `status` is `0` on success or the error code on failure |
+/// | `LORE_EVENT_END` | `lore_end_event_data_t` | Always emitted after `COMPLETE` to signal callback termination |
+///
+/// ## Branch Events
+///
+/// | Tag | Data Type | Description |
+/// |-----|-----------|-------------|
+/// | `LORE_EVENT_BRANCH_LATEST_LIST_ENTRY` | `lore_branch_latest_list_entry_event_data_t` | Emitted for each revision the branch LATEST has held, most recent first |
+#[unsafe(no_mangle)]
+pub extern "C" fn lore_branch_latest_list_async(
+    globals: &LoreGlobalArgs,
+    args: &LoreBranchLatestListArgs,
+    callback: LoreEventCallbackConfig,
+) {
+    run_asynchronously(globals, args, callback, dispatch_command);
+}
+
 pub type LoreBranchPushArgs = crate::branch::LoreBranchPushArgs;
 
 /// Push local branch commits to the remote repository.

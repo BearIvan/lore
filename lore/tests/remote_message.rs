@@ -86,6 +86,40 @@ async fn message_to_server_to_and_from_bytes() {
     }
 }
 
+/// A LATEST history listing relayed to the service carries the branch and the entry limit.
+#[tokio::test]
+async fn branch_latest_list_args_survive_the_wire() {
+    use lore::branch::LoreBranchLatestListArgs;
+
+    let args = LoreBranchLatestListArgs {
+        branch: LoreString::from_str("release/5.4"),
+        limit: 7,
+    };
+
+    for (serialization, label) in [
+        (SerializationType::Json, "json"),
+        (SerializationType::Bincode, "bincode"),
+    ] {
+        let message = MessageToServer {
+            globals: LoreGlobalArgs::default(),
+            command: LoreCommand::BranchLatestList(args.clone()),
+        };
+        let message_bytes = write_v1_message(message, serialization).unwrap();
+        let processed: Result<Option<(V1Header, MessageToServer)>, MessageError> =
+            blocking_read_v1_message(&mut message_bytes.as_slice());
+        let processed = processed
+            .unwrap_or_else(|error| panic!("{label} must read back: {error:?}"))
+            .expect("a whole message must be present");
+
+        match processed.1.command {
+            LoreCommand::BranchLatestList(read_back) => {
+                assert_eq!(read_back, args, "{label} must carry every field unchanged");
+            }
+            other => panic!("Unexpected command: {other:?}"),
+        }
+    }
+}
+
 /// A delete names its repository by text alone, so the service deletes the repository the caller
 /// named only if that text crosses the wire unchanged.
 #[tokio::test]

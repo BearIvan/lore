@@ -33,6 +33,7 @@ pub enum LoreCommand {
     BranchMergeStart(crate::branch::LoreBranchMergeStartArgs),
     BranchSwitch(crate::branch::LoreBranchSwitchArgs),
     BranchReset(crate::branch::LoreBranchResetArgs),
+    BranchLatestList(crate::branch::LoreBranchLatestListArgs),
     BranchPush(crate::branch::LoreBranchPushArgs),
     BranchMetadataGet(crate::branch::LoreBranchMetadataGetArgs),
     BranchMetadataSet(crate::branch::LoreBranchMetadataSetArgs),

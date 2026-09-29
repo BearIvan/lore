@@ -1779,6 +1779,19 @@ class Lore:
 
         return self._capi_driver(library_path, "auth-user-info", self.path, *user_ids)
 
+    def branch_latest_list_capi(
+        self, library_path: str, keep_store_alive_seconds: int = 0
+    ) -> int:
+        """List the current branch's LATEST history through the public C API,
+        returning the FFI code. The stores are held open for
+        `keep_store_alive_seconds` after the call, none if `0`."""
+        return self._capi_driver(
+            library_path,
+            "branch-latest-list",
+            self.path,
+            str(keep_store_alive_seconds),
+        )
+
     def service_capi(self, library_path: str, command: str) -> int:
         """Start or stop the service through the public C API, returning the FFI
         code. `command` is `service-start` or `service-stop`.

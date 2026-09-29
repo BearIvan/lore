@@ -4301,6 +4301,14 @@ typedef struct lore_branch_reset_args_t {
   struct lore_string_t branch;
 } lore_branch_reset_args_t;
 
+// Arguments for listing a branch's LATEST revision history.
+typedef struct lore_branch_latest_list_args_t {
+  // Branch to list, current branch if empty
+  struct lore_string_t branch;
+  // Maximum entries to return (`0` uses the default of 30)
+  uint32_t limit;
+} lore_branch_latest_list_args_t;
+
 // Arguments for pushing a branch and its revisions to the remote.
 typedef struct lore_branch_push_args_t {
   // Optional branch to push, current branch if not given
@@ -7344,6 +7352,58 @@ int32_t lore_branch_reset(const struct lore_global_args_t *globals,
 void lore_branch_reset_async(const struct lore_global_args_t *globals,
                              const struct lore_branch_reset_args_t *args,
                              struct lore_event_callback_config_t callback);
+
+// List the revisions the LATEST of a branch has held, most recent first.
+//
+// # Events
+//
+// Events are delivered via the callback as `lore_event_t`. Use the `tag` field to identify the event type.
+//
+// ## Standard Events
+//
+// These events are emitted by all interface functions:
+//
+// | Tag | Data Type | Description |
+// |-----|-----------|-------------|
+// | `LORE_EVENT_LOG` | `lore_log_event_data_t` | Diagnostic messages throughout execution |
+// | `LORE_EVENT_ERROR` | `lore_error_event_data_t` | Emitted for a non-fatal error during the operation |
+// | `LORE_EVENT_COMPLETE` | `lore_complete_event_data_t` | Always emitted at the end; `status` is `0` on success or the error code on failure |
+// | `LORE_EVENT_END` | `lore_end_event_data_t` | Always emitted after `COMPLETE` to signal callback termination |
+//
+// ## Branch Events
+//
+// | Tag | Data Type | Description |
+// |-----|-----------|-------------|
+// | `LORE_EVENT_BRANCH_LATEST_LIST_ENTRY` | `lore_branch_latest_list_entry_event_data_t` | Emitted for each revision the branch LATEST has held, most recent first |
+int32_t lore_branch_latest_list(const struct lore_global_args_t *globals,
+                                const struct lore_branch_latest_list_args_t *args,
+                                struct lore_event_callback_config_t callback);
+
+// Asynchronous version of `lore_branch_latest_list`.
+//
+// # Events
+//
+// Events are delivered via the callback as `lore_event_t`. Use the `tag` field to identify the event type.
+//
+// ## Standard Events
+//
+// These events are emitted by all interface functions:
+//
+// | Tag | Data Type | Description |
+// |-----|-----------|-------------|
+// | `LORE_EVENT_LOG` | `lore_log_event_data_t` | Diagnostic messages throughout execution |
+// | `LORE_EVENT_ERROR` | `lore_error_event_data_t` | Emitted for a non-fatal error during the operation |
+// | `LORE_EVENT_COMPLETE` | `lore_complete_event_data_t` | Always emitted at the end; `status` is `0` on success or the error code on failure |
+// | `LORE_EVENT_END` | `lore_end_event_data_t` | Always emitted after `COMPLETE` to signal callback termination |
+//
+// ## Branch Events
+//
+// | Tag | Data Type | Description |
+// |-----|-----------|-------------|
+// | `LORE_EVENT_BRANCH_LATEST_LIST_ENTRY` | `lore_branch_latest_list_entry_event_data_t` | Emitted for each revision the branch LATEST has held, most recent first |
+void lore_branch_latest_list_async(const struct lore_global_args_t *globals,
+                                   const struct lore_branch_latest_list_args_t *args,
+                                   struct lore_event_callback_config_t callback);
 
 // Push local branch commits to the remote repository.
 //

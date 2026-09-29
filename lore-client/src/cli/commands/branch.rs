@@ -8,8 +8,6 @@ use std::sync::atomic::Ordering;
 use chrono::DateTime;
 use clap::Args;
 use clap::Subcommand;
-use lore::branch;
-use lore::branch::LoreBranchLatestListArgs;
 use lore::branch::LoreBranchMetadataClearArgs;
 use lore::branch::LoreBranchMetadataGetArgs;
 use lore::branch::LoreBranchMetadataSetArgs;
@@ -20,6 +18,7 @@ use lore::interface::LoreBranchArchiveArgs;
 use lore::interface::LoreBranchCreateArgs;
 use lore::interface::LoreBranchDiffArgs;
 use lore::interface::LoreBranchInfoArgs;
+use lore::interface::LoreBranchLatestListArgs;
 use lore::interface::LoreBranchListArgs;
 use lore::interface::LoreBranchLocation;
 use lore::interface::LoreBranchMergeAbortArgs;
@@ -554,7 +553,7 @@ fn handle_branch_latest_list(globals: LoreGlobalArgs, args: &BranchLatestListArg
         }) as EventCallbackFn)
             .with_defaults(),
     ));
-    return branch::latest_list(globals, args, callback) as u8;
+    return run_command(globals, args.into(), callback) as u8;
 }
 
 fn handle_branch_create(globals: LoreGlobalArgs, args: &BranchCreateArgs) -> u8 {

@@ -1461,7 +1461,8 @@ async fn reset_impl(
 }
 
 #[repr(C)]
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, LoreArgs)]
+#[handler(latest_list_local)]
 /// Arguments for listing a branch's LATEST revision history.
 pub struct LoreBranchLatestListArgs {
     /// Branch to list, current branch if empty
@@ -1470,20 +1471,47 @@ pub struct LoreBranchLatestListArgs {
     pub limit: u32,
 }
 
-/// Lists a branch's LATEST revision history. Blocks on the runtime, so it is called from outside
-/// it.
-pub fn latest_list(
+/// Lists a branch's LATEST revision history, most recent first.
+///
+/// # Events
+///
+/// ## Standard Events
+///
+/// These events are emitted by all interface functions:
+///
+/// | Event | Description |
+/// |-------|-------------|
+/// | [`LoreEvent::Log`](crate::interface::LoreEvent::Log) | Diagnostic messages throughout execution |
+/// | [`LoreEvent::Error`](crate::interface::LoreEvent::Error) | Emitted for a non-fatal error during the operation |
+/// | [`LoreEvent::Complete`](crate::interface::LoreEvent::Complete) | Always emitted at the end; `status` is `0` on success or the error code on failure |
+/// | [`LoreEvent::End`](crate::interface::LoreEvent::End) | Always emitted after `Complete` to signal callback termination |
+///
+/// ## Branch Events
+///
+/// | Event | Description |
+/// |-------|-------------|
+/// | [`LoreEvent::BranchLatestListEntry`](crate::interface::LoreEvent::BranchLatestListEntry) | Emitted for each revision the branch LATEST has held, most recent first |
+pub async fn latest_list(
     globals: LoreGlobalArgs,
     args: LoreBranchLatestListArgs,
     callback: LoreEventCallback,
 ) -> i32 {
-    crate::runtime().block_on(repository_call_write(
+    dispatch_call(globals, args, callback, latest_list_local).await
+}
+
+async fn latest_list_local(
+    globals: LoreGlobalArgs,
+    args: LoreBranchLatestListArgs,
+    callback: LoreEventCallback,
+) -> i32 {
+    repository_call_write(
         globals,
         callback,
         args,
         latest_list,
         |repository, _token, args| latest_list_impl(repository, args),
-    ))
+    )
+    .await
 }
 
 async fn latest_list_impl(

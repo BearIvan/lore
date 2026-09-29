@@ -146,6 +146,7 @@ include = [
 "LoreBranchDiffConflictEventData" = "lore_branch_diff_conflict_event_data_t"
 "LoreBranchDiffEndEventData" = "lore_branch_diff_end_event_data_t"
 "LoreBranchDiffNodeData" = "lore_branch_diff_node_data_t"
+"LoreBranchLatestListArgs" = "lore_branch_latest_list_args_t"
 "LoreBranchLatestListEntryEventData" = "lore_branch_latest_list_entry_event_data_t"
 "LoreBranchListArgs" = "lore_branch_list_args_t"
 "LoreBranchListBeginEventData" = "lore_branch_list_begin_event_data_t"

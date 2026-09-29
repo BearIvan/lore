@@ -10,6 +10,7 @@ never surfaces.
 Run as a script, this module is the driver a test invokes as a subprocess:
 
     python lore_ffi.py auth-user-info <library-path> <repository-path> [user-id...]
+    python lore_ffi.py branch-latest-list <library-path> <repository-path> <keep-store-alive-seconds>
     python lore_ffi.py service-start <library-path>
     python lore_ffi.py service-stop <library-path>
     python lore_ffi.py repository-delete <library-path> <repository-path> <repository-url>
@@ -123,6 +124,13 @@ class LoreAuthUserInfoArgs(Structure):
     _fields_ = [("user_ids", LoreStringArray)]
 
 
+class LoreBranchLatestListArgs(Structure):
+    """`lore_branch_latest_list_args_t`. An empty `branch` lists the current
+    branch, a zero `limit` the default number of entries."""
+
+    _fields_ = [("branch", LoreString), ("limit", c_uint32)]
+
+
 class LoreServiceStartArgs(Structure):
     """`lore_service_start_args_t`. Carries no arguments of its own.
 
@@ -171,6 +179,7 @@ MIRRORED_STRUCTS = [
     ("lore_global_args_t", LoreGlobalArgs),
     ("lore_event_callback_config_t", LoreEventCallbackConfig),
     ("lore_auth_user_info_args_t", LoreAuthUserInfoArgs),
+    ("lore_branch_latest_list_args_t", LoreBranchLatestListArgs),
     ("lore_service_start_args_t", LoreServiceStartArgs),
     ("lore_service_stop_args_t", LoreServiceStopArgs),
     ("lore_repository_delete_args_t", LoreRepositoryDeleteArgs),
@@ -219,6 +228,12 @@ class LoreLibrary:
             POINTER(LoreAuthUserInfoArgs),
             LoreEventCallbackConfig,
         ]
+        self._lib.lore_branch_latest_list.restype = c_int32
+        self._lib.lore_branch_latest_list.argtypes = [
+            POINTER(LoreGlobalArgs),
+            POINTER(LoreBranchLatestListArgs),
+            LoreEventCallbackConfig,
+        ]
         self._lib.lore_service_start.restype = c_int32
         self._lib.lore_service_start.argtypes = [
             POINTER(LoreGlobalArgs),
@@ -263,6 +278,25 @@ class LoreLibrary:
         no_callback = LoreEventCallbackConfig(0, None)
         return self._lib.lore_auth_user_info(
             ctypes.byref(globals_args), ctypes.byref(args), no_callback
+        )
+
+    def branch_latest_list(
+        self, repository_path: str, keep_store_alive_seconds: int
+    ) -> int:
+        """Call `lore_branch_latest_list` for the current branch, returning its
+        FFI code. The stores stay open for `keep_store_alive_seconds` after the
+        call, none if `0`."""
+        path_bytes = repository_path.encode()
+
+        globals_args = LoreGlobalArgs()
+        globals_args.repository_path = LoreString(path_bytes, len(path_bytes))
+        globals_args.store_keep_alive = keep_store_alive_seconds != 0
+        globals_args.store_keep_alive_seconds = keep_store_alive_seconds
+
+        return self._lib.lore_branch_latest_list(
+            ctypes.byref(globals_args),
+            ctypes.byref(LoreBranchLatestListArgs()),
+            LoreEventCallbackConfig(0, None),
         )
 
     def service_start(self) -> int:
@@ -334,6 +368,7 @@ class LoreLibrary:
 
 USAGE = """usage:
   lore_ffi.py auth-user-info <library-path> <repository-path> [user-id...]
+  lore_ffi.py branch-latest-list <library-path> <repository-path> <keep-store-alive-seconds>
   lore_ffi.py service-start <library-path>
   lore_ffi.py service-stop <library-path>
   lore_ffi.py repository-delete <library-path> <repository-path> <repository-url>
@@ -344,6 +379,10 @@ def main(argv: list[str]) -> int:
     match argv:
         case ["auth-user-info", library_path, repository_path, *user_ids]:
             return LoreLibrary(library_path).auth_user_info(repository_path, user_ids)
+        case ["branch-latest-list", library_path, repository_path, keep_alive]:
+            return LoreLibrary(library_path).branch_latest_list(
+                repository_path, int(keep_alive)
+            )
         case ["service-start", library_path]:
             return LoreLibrary(library_path).service_start()
         case ["service-stop", library_path]:
