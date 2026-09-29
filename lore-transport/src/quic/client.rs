@@ -1346,8 +1346,7 @@ pub async fn send_command<const HIGH_PRIORITY: bool, const AWAIT_RESPONSE: bool>
 
         if stream_count != 0 && stream_index >= stream_count {
             // Box the rare path to avoid increasing send_command future size
-            let connection = connection.clone();
-            Box::pin(async move { add_stream(connection).await }).await?;
+            Box::pin(add_stream(connection.clone())).await?;
         }
     }
 
