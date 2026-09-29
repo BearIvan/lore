@@ -62,11 +62,11 @@ pub async fn start(
     start_local(globals, args, callback).await
 }
 
-async fn start_local(
+fn start_local(
     globals: LoreGlobalArgs,
     args: LoreServiceStartArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     no_repository_call(globals, callback, args, start, move |_args| async move {
         if service_runs_in_this_process() {
             // The command reached the service itself, which is running, and a
@@ -81,7 +81,6 @@ async fn start_local(
             lore_info!("Lore service is running");
         })
     })
-    .await
 }
 
 #[repr(C)]

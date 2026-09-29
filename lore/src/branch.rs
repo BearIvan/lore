@@ -85,11 +85,11 @@ pub async fn create(
     dispatch_call(globals, args, callback, create_local).await
 }
 
-async fn create_local(
+fn create_local(
     globals: LoreGlobalArgs,
     args: LoreBranchCreateArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_write(
         globals,
         callback,
@@ -112,7 +112,6 @@ async fn create_local(
             .await
         },
     )
-    .await
 }
 
 #[repr(C)]
@@ -154,11 +153,11 @@ pub async fn info(
     dispatch_call(globals, args, callback, info_local).await
 }
 
-async fn info_local(
+fn info_local(
     globals: LoreGlobalArgs,
     args: LoreBranchInfoArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_read(globals, callback, args, info, move |repository, args| {
         let branch_name = args.branch.to_string();
         let link_path = args.link.to_string();
@@ -175,7 +174,6 @@ async fn info_local(
             lore_revision::branch::info::info_boxed(repository, branch_name).await
         }
     })
-    .await
 }
 
 #[repr(C)]
@@ -228,11 +226,11 @@ pub async fn diff(
     dispatch_call(globals, args, callback, diff_local).await
 }
 
-async fn diff_local(
+fn diff_local(
     globals: LoreGlobalArgs,
     args: LoreBranchDiffArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_read(globals, callback, args, diff, move |repository, args| {
         lore_revision::branch::diff::diff(
             repository,
@@ -242,7 +240,6 @@ async fn diff_local(
             args.auto_resolve != 0,
         )
     })
-    .await
 }
 
 #[repr(C)]
@@ -284,11 +281,11 @@ pub async fn list(
     dispatch_call(globals, args, callback, list_local).await
 }
 
-async fn list_local(
+fn list_local(
     globals: LoreGlobalArgs,
     args: LoreBranchListArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_read(globals, callback, args, list, move |repository, args| {
         branch::list_output(
             repository,
@@ -297,7 +294,6 @@ async fn list_local(
             args.archived != 0,
         )
     })
-    .await
 }
 
 #[repr(C)]
@@ -361,11 +357,11 @@ pub async fn merge_start(
     dispatch_call(globals, args, callback, merge_start_local).await
 }
 
-async fn merge_start_local(
+fn merge_start_local(
     globals: LoreGlobalArgs,
     args: LoreBranchMergeStartArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_write(
         globals,
         callback,
@@ -402,7 +398,6 @@ async fn merge_start_local(
             }
         },
     )
-    .await
 }
 
 #[repr(C)]
@@ -446,11 +441,11 @@ pub async fn merge_abort(
     dispatch_call(globals, args, callback, merge_abort_local).await
 }
 
-async fn merge_abort_local(
+fn merge_abort_local(
     globals: LoreGlobalArgs,
     args: LoreBranchMergeAbortArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_write(
         globals,
         callback,
@@ -469,7 +464,6 @@ async fn merge_abort_local(
             }
         },
     )
-    .await
 }
 
 #[repr(C)]
@@ -510,11 +504,11 @@ pub async fn merge_unresolve(
     dispatch_call(globals, args, callback, merge_unresolve_local).await
 }
 
-async fn merge_unresolve_local(
+fn merge_unresolve_local(
     globals: LoreGlobalArgs,
     args: LoreBranchMergeUnresolveArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_write(
         globals,
         callback,
@@ -524,7 +518,6 @@ async fn merge_unresolve_local(
             branch::merge::branch_merge_unresolve(repository, &token, args.paths).await
         },
     )
-    .await
 }
 
 #[repr(C)]
@@ -589,11 +582,11 @@ pub async fn merge_into(
     dispatch_call(globals, args, callback, merge_into_local).await
 }
 
-async fn merge_into_local(
+fn merge_into_local(
     globals: LoreGlobalArgs,
     args: LoreBranchMergeIntoArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_write(
         globals,
         callback,
@@ -627,7 +620,6 @@ async fn merge_into_local(
             }
         },
     )
-    .await
 }
 
 #[repr(C)]
@@ -669,11 +661,11 @@ pub async fn merge_restart(
     dispatch_call(globals, args, callback, merge_restart_local).await
 }
 
-async fn merge_restart_local(
+fn merge_restart_local(
     globals: LoreGlobalArgs,
     args: LoreBranchMergeRestartArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_write(
         globals,
         callback,
@@ -683,7 +675,6 @@ async fn merge_restart_local(
             branch::merge::merge_restart(repository, &token, args.paths).await
         },
     )
-    .await
 }
 
 #[repr(C)]
@@ -724,11 +715,11 @@ pub async fn merge_resolve(
     dispatch_call(globals, args, callback, merge_resolve_local).await
 }
 
-async fn merge_resolve_local(
+fn merge_resolve_local(
     globals: LoreGlobalArgs,
     args: LoreBranchMergeResolveArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_write(
         globals,
         callback,
@@ -738,7 +729,6 @@ async fn merge_resolve_local(
             branch::merge::branch_merge_resolve(repository, &token, args.paths).await
         },
     )
-    .await
 }
 
 #[repr(C)]
@@ -779,11 +769,11 @@ pub async fn merge_resolve_mine(
     dispatch_call(globals, args, callback, merge_resolve_mine_local).await
 }
 
-async fn merge_resolve_mine_local(
+fn merge_resolve_mine_local(
     globals: LoreGlobalArgs,
     args: LoreBranchMergeResolveMineArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_write(
         globals,
         callback,
@@ -793,7 +783,6 @@ async fn merge_resolve_mine_local(
             branch::merge::merge_resolve_mine(repository, &token, args.paths).await
         },
     )
-    .await
 }
 
 #[repr(C)]
@@ -834,11 +823,11 @@ pub async fn merge_resolve_theirs(
     dispatch_call(globals, args, callback, merge_resolve_theirs_local).await
 }
 
-async fn merge_resolve_theirs_local(
+fn merge_resolve_theirs_local(
     globals: LoreGlobalArgs,
     args: LoreBranchMergeResolveTheirsArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_write(
         globals,
         callback,
@@ -848,7 +837,6 @@ async fn merge_resolve_theirs_local(
             branch::merge::merge_resolve_theirs(repository, &token, args.paths).await
         },
     )
-    .await
 }
 
 #[repr(C)]
@@ -901,11 +889,11 @@ pub async fn push(
     dispatch_call(globals, args, callback, push_local).await
 }
 
-async fn push_local(
+fn push_local(
     globals: LoreGlobalArgs,
     args: LoreBranchPushArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_write(
         globals,
         callback,
@@ -913,7 +901,6 @@ async fn push_local(
         push,
         |repository, token, args| async move { push_impl(repository, &token, args).await },
     )
-    .await
 }
 
 async fn push_impl(
@@ -987,11 +974,11 @@ pub async fn switch(
     dispatch_call(globals, args, callback, switch_local).await
 }
 
-async fn switch_local(
+fn switch_local(
     globals: LoreGlobalArgs,
     args: LoreBranchSwitchArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_write(
         globals,
         callback,
@@ -1013,7 +1000,6 @@ async fn switch_local(
             repository::branch_switch(repository, &token, branch, options).await
         },
     )
-    .await
 }
 
 #[repr(C)]
@@ -1053,11 +1039,11 @@ pub async fn protect(
     dispatch_call(globals, args, callback, protect_local).await
 }
 
-async fn protect_local(
+fn protect_local(
     globals: LoreGlobalArgs,
     args: LoreBranchProtectArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_write(
         globals,
         callback,
@@ -1069,7 +1055,6 @@ async fn protect_local(
             branch::protect(repository, branch.id).await
         },
     )
-    .await
 }
 
 #[repr(C)]
@@ -1109,11 +1094,11 @@ pub async fn unprotect(
     dispatch_call(globals, args, callback, unprotect_local).await
 }
 
-async fn unprotect_local(
+fn unprotect_local(
     globals: LoreGlobalArgs,
     args: LoreBranchUnprotectArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_write(
         globals,
         callback,
@@ -1125,7 +1110,6 @@ async fn unprotect_local(
             branch::unprotect(repository, branch.id).await
         },
     )
-    .await
 }
 
 #[repr(C)]
@@ -1181,11 +1165,11 @@ pub async fn archive(
     dispatch_call(globals, args, callback, archive_local).await
 }
 
-async fn archive_local(
+fn archive_local(
     globals: LoreGlobalArgs,
     args: LoreBranchArchiveArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_write(
         globals,
         callback,
@@ -1193,7 +1177,6 @@ async fn archive_local(
         archive,
         |repository, _token, args| archive_impl(repository, args),
     )
-    .await
 }
 
 async fn archive_impl(
@@ -1431,11 +1414,11 @@ pub async fn reset(
     dispatch_call(globals, args, callback, reset_local).await
 }
 
-async fn reset_local(
+fn reset_local(
     globals: LoreGlobalArgs,
     args: LoreBranchResetArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_write(
         globals,
         callback,
@@ -1443,7 +1426,6 @@ async fn reset_local(
         reset,
         |repository, token, args| async move { reset_impl(repository, &token, args).await },
     )
-    .await
 }
 
 async fn reset_impl(
@@ -1499,11 +1481,11 @@ pub async fn latest_list(
     dispatch_call(globals, args, callback, latest_list_local).await
 }
 
-async fn latest_list_local(
+fn latest_list_local(
     globals: LoreGlobalArgs,
     args: LoreBranchLatestListArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_write(
         globals,
         callback,
@@ -1511,7 +1493,6 @@ async fn latest_list_local(
         latest_list,
         |repository, _token, args| latest_list_impl(repository, args),
     )
-    .await
 }
 
 async fn latest_list_impl(
@@ -1574,11 +1555,11 @@ pub async fn metadata_get(
     dispatch_call(globals, args, callback, metadata_get_local).await
 }
 
-async fn metadata_get_local(
+fn metadata_get_local(
     globals: LoreGlobalArgs,
     args: LoreBranchMetadataGetArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_write(
         globals,
         callback,
@@ -1605,7 +1586,6 @@ async fn metadata_get_local(
             }
         },
     )
-    .await
 }
 
 #[repr(C)]
@@ -1632,11 +1612,11 @@ pub async fn metadata_set(
     dispatch_call(globals, args, callback, metadata_set_local).await
 }
 
-async fn metadata_set_local(
+fn metadata_set_local(
     globals: LoreGlobalArgs,
     args: LoreBranchMetadataSetArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_write(
         globals,
         callback,
@@ -1644,7 +1624,6 @@ async fn metadata_set_local(
         metadata_set,
         |repository, _token, args| metadata_set_impl(repository, args),
     )
-    .await
 }
 
 async fn metadata_set_impl(
@@ -1707,11 +1686,11 @@ pub async fn metadata_clear(
     dispatch_call(globals, args, callback, metadata_clear_local).await
 }
 
-async fn metadata_clear_local(
+fn metadata_clear_local(
     globals: LoreGlobalArgs,
     args: LoreBranchMetadataClearArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_write(
         globals,
         callback,
@@ -1729,7 +1708,6 @@ async fn metadata_clear_local(
             }
         },
     )
-    .await
 }
 
 #[cfg(test)]

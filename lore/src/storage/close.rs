@@ -80,11 +80,11 @@ pub async fn close(
     dispatch_call(globals, args, callback, close_local).await
 }
 
-async fn close_local(
+fn close_local(
     globals: LoreGlobalArgs,
     args: LoreStorageCloseArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     no_repository_call(globals, callback, args, close, async move |args| {
         // Unregister first so concurrent `handle::lookup` returns None for new ops; ops that
         // already grabbed the handle still hold their `Arc` and the drain below waits them out.
@@ -102,7 +102,6 @@ async fn close_local(
 
         Ok::<_, StorageError>(())
     })
-    .await
 }
 
 #[cfg(test)]

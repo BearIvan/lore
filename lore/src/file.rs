@@ -85,12 +85,12 @@ pub async fn info(
     dispatch_call(globals, args, callback, info_local).await
 }
 
-async fn info_local(
+fn info_local(
     globals: LoreGlobalArgs,
     args: LoreFileInfoArgs,
     callback: LoreEventCallback,
-) -> i32 {
-    repository_call_read(globals, callback, args, info, info_impl).await
+) -> impl Future<Output = i32> {
+    repository_call_read(globals, callback, args, info, info_impl)
 }
 
 async fn info_impl(
@@ -160,12 +160,12 @@ pub async fn diff(
     dispatch_call(globals, args, callback, diff_local).await
 }
 
-async fn diff_local(
+fn diff_local(
     globals: LoreGlobalArgs,
     args: LoreFileDiffArgs,
     callback: LoreEventCallback,
-) -> i32 {
-    repository_call_read(globals, callback, args, diff, diff_impl).await
+) -> impl Future<Output = i32> {
+    repository_call_read(globals, callback, args, diff, diff_impl)
 }
 
 async fn diff_impl(
@@ -231,11 +231,11 @@ pub async fn metadata_clear(
     dispatch_call(globals, args, callback, metadata_clear_local).await
 }
 
-async fn metadata_clear_local(
+fn metadata_clear_local(
     globals: LoreGlobalArgs,
     args: LoreFileMetadataClearArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_write(
         globals,
         callback,
@@ -245,7 +245,6 @@ async fn metadata_clear_local(
             metadata::clear::clear_file(repository, &token, args.path.to_string()).await
         },
     )
-    .await
 }
 
 /// Arguments for retrieving a single metadata value for a file by key and revision.
@@ -289,11 +288,11 @@ pub async fn metadata_get(
     dispatch_call(globals, args, callback, metadata_get_local).await
 }
 
-async fn metadata_get_local(
+fn metadata_get_local(
     globals: LoreGlobalArgs,
     args: LoreFileMetadataGetArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_read(
         globals,
         callback,
@@ -308,7 +307,6 @@ async fn metadata_get_local(
             )
         },
     )
-    .await
 }
 
 /// Arguments for listing all metadata key/value pairs for a file at a revision.
@@ -350,11 +348,11 @@ pub async fn metadata_list(
     dispatch_call(globals, args, callback, metadata_list_local).await
 }
 
-async fn metadata_list_local(
+fn metadata_list_local(
     globals: LoreGlobalArgs,
     args: LoreFileMetadataListArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_read(
         globals,
         callback,
@@ -364,7 +362,6 @@ async fn metadata_list_local(
             metadata::list::list_file(repository, args.revision.into(), args.path.to_string())
         },
     )
-    .await
 }
 
 /// Arguments for setting metadata key/value pairs on one or more files.
@@ -406,11 +403,11 @@ pub async fn metadata_set(
     dispatch_call(globals, args, callback, metadata_set_local).await
 }
 
-async fn metadata_set_local(
+fn metadata_set_local(
     globals: LoreGlobalArgs,
     args: LoreFileMetadataSetArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_write(
         globals,
         callback,
@@ -418,7 +415,6 @@ async fn metadata_set_local(
         metadata_set,
         |repository, token, args| async move { metadata_set_impl(repository, &token, args).await },
     )
-    .await
 }
 
 async fn metadata_set_impl(
@@ -539,11 +535,11 @@ pub async fn stage(
     dispatch_call(globals, args, callback, stage_local).await
 }
 
-async fn stage_local(
+fn stage_local(
     globals: LoreGlobalArgs,
     args: LoreFileStageArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_write(
         globals,
         callback,
@@ -561,7 +557,6 @@ async fn stage_local(
             file::stage::stage(repository, &token, args.paths, options).await
         },
     )
-    .await
 }
 
 /// Arguments for staging one or more files as merge resolutions.
@@ -604,11 +599,11 @@ pub async fn stage_merge(
     dispatch_call(globals, args, callback, stage_merge_local).await
 }
 
-async fn stage_merge_local(
+fn stage_merge_local(
     globals: LoreGlobalArgs,
     args: LoreFileStageMergeArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_write(
         globals,
         callback,
@@ -618,7 +613,6 @@ async fn stage_merge_local(
             file::stage::stage_merge(repository, &token, args.paths).await
         },
     )
-    .await
 }
 
 /// Arguments for staging a file move from one path to another.
@@ -663,11 +657,11 @@ pub async fn stage_move(
     dispatch_call(globals, args, callback, stage_move_local).await
 }
 
-async fn stage_move_local(
+fn stage_move_local(
     globals: LoreGlobalArgs,
     args: LoreFileStageMoveArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_write(
         globals,
         callback,
@@ -687,7 +681,6 @@ async fn stage_move_local(
             file::stage::stage_move(repository, &token, from, to, options).await
         },
     )
-    .await
 }
 
 // ---- Dirty API ----
@@ -709,11 +702,11 @@ pub async fn dirty(
     dispatch_call(globals, args, callback, dirty_local).await
 }
 
-async fn dirty_local(
+fn dirty_local(
     globals: LoreGlobalArgs,
     args: LoreFileDirtyArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_write(
         globals,
         callback,
@@ -721,7 +714,6 @@ async fn dirty_local(
         dirty,
         move |repository, _token, args| file::dirty::dirty(repository, args.paths),
     )
-    .await
 }
 
 /// Arguments for marking a file dirty-moved (relocates the staged node, no filesystem checks).
@@ -743,11 +735,11 @@ pub async fn dirty_move(
     dispatch_call(globals, args, callback, dirty_move_local).await
 }
 
-async fn dirty_move_local(
+fn dirty_move_local(
     globals: LoreGlobalArgs,
     args: LoreFileDirtyMoveArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_write(
         globals,
         callback,
@@ -759,7 +751,6 @@ async fn dirty_move_local(
             file::dirty::dirty_move(repository, from, to)
         },
     )
-    .await
 }
 
 /// Arguments for marking a file dirty-copied (creates a new staged destination node, no filesystem checks).
@@ -781,11 +772,11 @@ pub async fn dirty_copy(
     dispatch_call(globals, args, callback, dirty_copy_local).await
 }
 
-async fn dirty_copy_local(
+fn dirty_copy_local(
     globals: LoreGlobalArgs,
     args: LoreFileDirtyCopyArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_write(
         globals,
         callback,
@@ -797,7 +788,6 @@ async fn dirty_copy_local(
             file::dirty::dirty_copy(repository, from, to)
         },
     )
-    .await
 }
 
 // ---- Unstage API ----
@@ -843,11 +833,11 @@ pub async fn unstage(
     dispatch_call(globals, args, callback, unstage_local).await
 }
 
-async fn unstage_local(
+fn unstage_local(
     globals: LoreGlobalArgs,
     args: LoreFileUnstageArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_write(
         globals,
         callback,
@@ -858,7 +848,6 @@ async fn unstage_local(
             file::unstage::unstage(repository, &token, args.paths, options).await
         },
     )
-    .await
 }
 
 /// Arguments for resetting files to a revision, optionally purging untracked files.
@@ -908,11 +897,11 @@ pub async fn reset(
     dispatch_call(globals, args, callback, reset_local).await
 }
 
-async fn reset_local(
+fn reset_local(
     globals: LoreGlobalArgs,
     args: LoreFileResetArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_write(
         globals,
         callback,
@@ -927,7 +916,6 @@ async fn reset_local(
             file::reset::reset(repository, &token, args.paths, args.revision, options).await
         },
     )
-    .await
 }
 
 /// Arguments for resetting files to the last merged revision on a branch.
@@ -979,11 +967,11 @@ pub async fn reset_to_last_merged(
     dispatch_call(globals, args, callback, reset_to_last_merged_local).await
 }
 
-async fn reset_to_last_merged_local(
+fn reset_to_last_merged_local(
     globals: LoreGlobalArgs,
     args: LoreFileResetToLastMergedArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_write(
         globals,
         callback,
@@ -1004,7 +992,6 @@ async fn reset_to_last_merged_local(
             )
         },
     )
-    .await
 }
 
 /// Arguments for writing a file to a destination by path/revision or by address.
@@ -1158,11 +1145,11 @@ pub async fn obliterate(
     dispatch_call(globals, args, callback, obliterate_local).await
 }
 
-async fn obliterate_local(
+fn obliterate_local(
     globals: LoreGlobalArgs,
     args: LoreFileObliterateArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_write(
         globals,
         callback,
@@ -1170,7 +1157,6 @@ async fn obliterate_local(
         obliterate,
         |repository, token, args| async move { obliterate_impl(repository, &token, args).await },
     )
-    .await
 }
 
 async fn obliterate_impl(
@@ -1234,12 +1220,12 @@ pub async fn dump(
     dispatch_call(globals, args, callback, dump_local).await
 }
 
-async fn dump_local(
+fn dump_local(
     globals: LoreGlobalArgs,
     args: LoreFileDumpArgs,
     callback: LoreEventCallback,
-) -> i32 {
-    repository_call_read(globals, callback, args, dump, dump_impl).await
+) -> impl Future<Output = i32> {
+    repository_call_read(globals, callback, args, dump, dump_impl)
 }
 
 async fn dump_impl(
@@ -1297,12 +1283,12 @@ pub async fn hash(
     dispatch_call(globals, args, callback, hash_local).await
 }
 
-async fn hash_local(
+fn hash_local(
     globals: LoreGlobalArgs,
     args: LoreFileHashArgs,
     callback: LoreEventCallback,
-) -> i32 {
-    repository_call_read(globals, callback, args, hash, hash_impl).await
+) -> impl Future<Output = i32> {
+    repository_call_read(globals, callback, args, hash, hash_impl)
 }
 
 async fn hash_impl(
@@ -1363,11 +1349,11 @@ pub async fn history(
     dispatch_call(globals, args, callback, history_local).await
 }
 
-async fn history_local(
+fn history_local(
     globals: LoreGlobalArgs,
     args: LoreFileHistoryArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_read(globals, callback, args, history, move |repository, args| {
         let path = args.path.to_string();
 
@@ -1380,7 +1366,6 @@ async fn history_local(
 
         file::history::history(repository, path, options)
     })
-    .await
 }
 
 #[cfg(test)]

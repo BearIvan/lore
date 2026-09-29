@@ -68,11 +68,11 @@ pub async fn add(
     dispatch_call(globals, args, callback, add_local).await
 }
 
-async fn add_local(
+fn add_local(
     globals: LoreGlobalArgs,
     args: LoreLinkAddArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_write(
         globals,
         callback,
@@ -80,7 +80,6 @@ async fn add_local(
         add,
         |repository, token, args| async move { add_impl(repository, &token, args).await },
     )
-    .await
 }
 
 async fn add_impl(
@@ -150,11 +149,11 @@ pub async fn remove(
     dispatch_call(globals, args, callback, remove_local).await
 }
 
-async fn remove_local(
+fn remove_local(
     globals: LoreGlobalArgs,
     args: LoreLinkRemoveArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_write(
         globals,
         callback,
@@ -162,7 +161,6 @@ async fn remove_local(
         remove,
         |repository, token, args| async move { remove_impl(repository, &token, args).await },
     )
-    .await
 }
 
 async fn remove_impl(
@@ -211,15 +209,14 @@ pub async fn list(
     dispatch_call(globals, args, callback, list_local).await
 }
 
-async fn list_local(
+fn list_local(
     globals: LoreGlobalArgs,
     args: LoreLinkListArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_read(globals, callback, args, list, move |repository, _args| {
         lore_revision::link::list::list(repository)
     })
-    .await
 }
 
 /// Arguments for reading detailed information about a single link.
@@ -259,11 +256,11 @@ pub async fn info(
     dispatch_call(globals, args, callback, info_local).await
 }
 
-async fn info_local(
+fn info_local(
     globals: LoreGlobalArgs,
     args: LoreLinkInfoArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_read(
         globals,
         callback,
@@ -279,7 +276,6 @@ async fn info_local(
             lore_revision::link::info::info_boxed(repository, link_path).await
         },
     )
-    .await
 }
 
 /// Arguments for listing the links whose linked repositories hold staged changes.
@@ -316,11 +312,11 @@ pub async fn list_staged(
     dispatch_call(globals, args, callback, list_staged_local).await
 }
 
-async fn list_staged_local(
+fn list_staged_local(
     globals: LoreGlobalArgs,
     args: LoreLinkListStagedArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_read(
         globals,
         callback,
@@ -328,7 +324,6 @@ async fn list_staged_local(
         list_staged,
         move |repository, _args| lore_revision::link::list::list_staged(repository),
     )
-    .await
 }
 
 /// Arguments for updating the pin or properties of an existing link.
@@ -370,11 +365,11 @@ pub async fn update(
     dispatch_call(globals, args, callback, update_local).await
 }
 
-async fn update_local(
+fn update_local(
     globals: LoreGlobalArgs,
     args: LoreLinkUpdateArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     repository_call_write(
         globals,
         callback,
@@ -382,7 +377,6 @@ async fn update_local(
         update,
         |repository, token, args| async move { update_impl(repository, &token, args).await },
     )
-    .await
 }
 
 async fn update_impl(

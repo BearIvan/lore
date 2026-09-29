@@ -68,11 +68,11 @@ pub async fn create(
     dispatch_call(globals, args, callback, create_local).await
 }
 
-async fn create_local(
+fn create_local(
     globals: LoreGlobalArgs,
     args: LoreSharedStoreCreateArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     no_repository_call(globals, callback, args, create, async move |args| {
         let path = if args.path.as_str() == "" {
             None
@@ -89,7 +89,6 @@ async fn create_local(
         lore_revision::shared_store::create_shared_store(path, remote_url, args.make_default != 0)
             .await
     })
-    .await
 }
 
 #[repr(C)]

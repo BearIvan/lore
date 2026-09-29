@@ -14,7 +14,11 @@ pub trait LoreArgs {
 
 // Separate from `LoreArgs`, which is public, so that running a handler stays internal to this crate.
 pub(crate) trait InvokableLoreArgs: LoreArgs {
-    // Calls the local implementation of the functionality associated with this arg type
+    /// The future of this arg type's handler, named by its `#[handler]` attribute.
+    ///
+    /// The handler's own future, not one awaiting it: a future that only forwards to another holds
+    /// its arguments beside the future they moved into. A handler that only calls one of the
+    /// wrappers in `crate::call` returns that wrapper's future for the same reason.
     fn invoke_local(
         self,
         globals: LoreGlobalArgs,

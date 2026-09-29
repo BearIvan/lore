@@ -71,11 +71,11 @@ pub async fn close(
     dispatch_call(globals, args, callback, close_impl).await
 }
 
-async fn close_impl(
+fn close_impl(
     globals: LoreGlobalArgs,
     args: LoreRevisionTreeCloseArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     no_repository_call(globals, callback, args, close, async move |args| {
         let Some(internal) = handle::unregister(args.handle) else {
             LoreEvent::RevisionTreeCloseComplete(LoreRevisionTreeCloseCompleteEventData {
@@ -98,7 +98,6 @@ async fn close_impl(
 
         Ok::<_, CloseError>(())
     })
-    .await
 }
 
 #[cfg(test)]

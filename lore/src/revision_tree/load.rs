@@ -120,11 +120,11 @@ pub async fn load(
     dispatch_call(globals, args, callback, load_impl).await
 }
 
-async fn load_impl(
+fn load_impl(
     globals: LoreGlobalArgs,
     args: LoreRevisionTreeLoadArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     no_repository_call(globals, callback, args, load, async move |args| {
         let store_internal = storage_handle::lookup(args.store).ok_or_else(|| {
             LoadError::from(InvalidArguments {
@@ -157,7 +157,6 @@ async fn load_impl(
         .send();
         Ok::<(), LoadError>(())
     })
-    .await
 }
 
 #[cfg(test)]

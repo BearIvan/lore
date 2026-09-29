@@ -169,11 +169,11 @@ pub async fn open(
     dispatch_call(globals, args, callback, open_local).await
 }
 
-async fn open_local(
+fn open_local(
     globals: LoreGlobalArgs,
     args: LoreStorageOpenArgs,
     callback: LoreEventCallback,
-) -> i32 {
+) -> impl Future<Output = i32> {
     no_repository_call(globals, callback, args, open, async move |args| {
         let path = args.repository_path.as_str();
         let in_memory = args.in_memory != 0;
@@ -303,7 +303,6 @@ async fn open_local(
         .send();
         Ok::<(), StorageError>(())
     })
-    .await
 }
 
 #[cfg(test)]

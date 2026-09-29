@@ -78,23 +78,20 @@ where
             log_command_info(&caller, &args);
             let time_start = Instant::now();
 
-            let detail;
-            let mut weak_repository = None;
-            match repository::load_and_connect_with_token(
-                &repository_path,
-                RepositoryAccess::ReadOnly,
-                None,
-            )
-            .await
-            {
-                Ok(repository) => {
-                    detail = LoreErrorDetail::from_result(command(repository.clone(), args).await);
-                    weak_repository = Some(post_command_cleanup(repository).await);
-                }
-                Err(err) => {
-                    detail = LoreErrorDetail::from_error(&err);
-                }
-            }
+            let (detail, weak_repository) = 'call: {
+                let repository = match repository::load_and_connect_with_token(
+                    &repository_path,
+                    RepositoryAccess::ReadOnly,
+                    None,
+                )
+                .await
+                {
+                    Ok(repository) => repository,
+                    Err(err) => break 'call (LoreErrorDetail::from_error(&err), None),
+                };
+                let detail = LoreErrorDetail::from_result(command(repository.clone(), args).await);
+                (detail, Some(post_command_cleanup(repository).await))
+            };
 
             check_no_lingering_repository(weak_repository);
 
@@ -129,33 +126,29 @@ where
         Err(status) => return status,
     };
 
-    let token = RepositoryWriteToken::acquire(&repository_path).await;
-    let context_token = token.share();
-
     LORE_CONTEXT
         .scope(execution, async move {
+            let token = RepositoryWriteToken::acquire(&repository_path).await;
+            let context_token = token.share();
+
             log_command_info(&caller, &args);
             let time_start = Instant::now();
 
-            let detail;
-            let mut weak_repository = None;
-            match repository::load_and_connect_with_token(
-                &repository_path,
-                RepositoryAccess::ReadWrite,
-                Some(context_token),
-            )
-            .await
-            {
-                Ok(repository) => {
-                    detail = LoreErrorDetail::from_result(
-                        command(repository.clone(), token, args).await,
-                    );
-                    weak_repository = Some(post_command_cleanup(repository).await);
-                }
-                Err(err) => {
-                    detail = LoreErrorDetail::from_error(&err);
-                }
-            }
+            let (detail, weak_repository) = 'call: {
+                let repository = match repository::load_and_connect_with_token(
+                    &repository_path,
+                    RepositoryAccess::ReadWrite,
+                    Some(context_token),
+                )
+                .await
+                {
+                    Ok(repository) => repository,
+                    Err(err) => break 'call (LoreErrorDetail::from_error(&err), None),
+                };
+                let detail =
+                    LoreErrorDetail::from_result(command(repository.clone(), token, args).await);
+                (detail, Some(post_command_cleanup(repository).await))
+            };
 
             check_no_lingering_repository(weak_repository);
 
@@ -191,23 +184,20 @@ where
             log_command_info(&caller, &args);
             let time_start = Instant::now();
 
-            let detail;
-            let mut weak_repository = None;
-            match repository::load_and_connect_with_token(
-                &repository_path,
-                RepositoryAccess::NoStore,
-                None,
-            )
-            .await
-            {
-                Ok(repository) => {
-                    detail = LoreErrorDetail::from_result(command(repository.clone(), args).await);
-                    weak_repository = Some(post_command_cleanup(repository).await);
-                }
-                Err(err) => {
-                    detail = LoreErrorDetail::from_error(&err);
-                }
-            }
+            let (detail, weak_repository) = 'call: {
+                let repository = match repository::load_and_connect_with_token(
+                    &repository_path,
+                    RepositoryAccess::NoStore,
+                    None,
+                )
+                .await
+                {
+                    Ok(repository) => repository,
+                    Err(err) => break 'call (LoreErrorDetail::from_error(&err), None),
+                };
+                let detail = LoreErrorDetail::from_result(command(repository.clone(), args).await);
+                (detail, Some(post_command_cleanup(repository).await))
+            };
 
             check_no_lingering_repository(weak_repository);
 
