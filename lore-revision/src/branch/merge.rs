@@ -578,7 +578,7 @@ async fn merge_repository(
 
     // Diff over the full tree. A view-scoped diff drops the other branch's
     // out-of-view changes and leaves this branch divergent from it.
-    let diff = Box::pin(branch::diff3_collect_with_graft(
+    let diff = branch::diff3_collect_with_graft(
         full_tree_context(&repository),
         source_branch,
         revision,
@@ -590,7 +590,7 @@ async fn merge_repository(
         // The view decides which subtrees are out of view. The walk stays
         // full-tree.
         Some(repository.filter.clone()),
-    ))
+    )
     .await
     .forward::<MergeError>("running diff3 for merge")?;
 
@@ -747,13 +747,13 @@ pub async fn merge_start(
             let state_source = state::State::deserialize(repository.clone(), endpoints.source)
                 .await
                 .forward::<MergeError>("deserializing diff source state")?;
-            Box::pin(link::classify_link_pins(
+            link::classify_link_pins(
                 repository.clone(),
                 &state_staged,
                 &state_source,
                 link::LinkPinResolution::ThreeWay(state_base),
                 &[],
-            ))
+            )
             .await
             .forward::<MergeError>("comparing link pins")?;
 
@@ -1630,23 +1630,23 @@ async fn finalize_main_merge(
     let state_source = state::State::deserialize(repository.clone(), endpoints.source)
         .await
         .forward::<MergeError>("deserializing diff source state")?;
-    let planned = Box::pin(link::classify_link_pins(
+    let planned = link::classify_link_pins(
         repository.clone(),
         &state_staged,
         &state_source,
         link::LinkPinResolution::ThreeWay(state_base),
         &merged_nodes,
-    ))
+    )
     .await
     .forward::<MergeError>("comparing link pins with the merged branch")?;
 
     if !dry_run {
-        Box::pin(link::apply_link_pins(
+        link::apply_link_pins(
             repository.clone(),
             &state_staged,
             planned,
             link::LinkPinRealize::WorkingTree,
-        ))
+        )
         .await
         .forward::<MergeError>("carrying link pins from the merged branch")?;
 
@@ -2059,7 +2059,7 @@ async fn verify_changes_against_filesystem(
                 let mut change = change;
                 let no_forward_changes = matches!(merge_type, MergeType::CherryPick);
                 let no_force_hash_check = false;
-                Box::pin(crate::fs::realize::verify_filesystem(
+                crate::fs::realize::verify_filesystem(
                     &mut change,
                     repository.clone(),
                     operation,
@@ -2068,7 +2068,7 @@ async fn verify_changes_against_filesystem(
                     no_force_hash_check,
                     stats,
                     FilterMode::Full,
-                ))
+                )
                 .await
                 .forward::<MergeError>("verifying filesystem for change")?;
 
@@ -4516,14 +4516,14 @@ pub async fn merge_into(
     // branch's rows are the newer ones. The working tree stays on the current
     // branch, so nothing is realized on disk.
     if !options.ignore_links {
-        Box::pin(link::merge_link_pins(
+        link::merge_link_pins(
             repository.clone(),
             &state_staged,
             &state_current,
             link::LinkPinResolution::Incoming,
             link::LinkPinRealize::StateOnly,
             &[],
-        ))
+        )
         .await
         .forward::<MergeError>("carrying link pins into the target branch")?;
     }

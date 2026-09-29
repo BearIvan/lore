@@ -653,13 +653,13 @@ pub(crate) async fn sync(
             format!("Failed to deserialize state {current_revision}")
         })?;
 
-    let (layers, nearest_revision) = Box::pin(sync_load_layer_list(
+    let (layers, nearest_revision) = sync_load_layer_list(
         repository.clone(),
         target_branch,
         revision,
         state_current.clone(),
         view_change || options.reset,
-    ))
+    )
     .await?;
 
     if let Some(main_revision) = nearest_revision
@@ -853,13 +853,13 @@ pub(crate) async fn sync(
     }));
 
     let state_synced = state_target.clone();
-    let result = Box::pin(sync_realize(
+    let result = sync_realize(
         repository_current.clone(),
         repository.clone(),
         state_current,
         state_target,
         options.clone(),
-    ))
+    )
     .await;
 
     // Make sure caching has finished

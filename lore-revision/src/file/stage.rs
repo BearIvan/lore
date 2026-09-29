@@ -373,7 +373,7 @@ async fn precreate_shared_ancestors<'a>(
             let link_tracker = walk.link_tracker.clone();
             let global_mask = walk.global_mask.clone();
             lore_spawn!(level_tasks, async move {
-                let result = Box::pin(stage::stage_filesystem_path(
+                let result = stage::stage_filesystem_path(
                     operation,
                     walk_path.at,
                     walk_path.remainder,
@@ -383,7 +383,7 @@ async fn precreate_shared_ancestors<'a>(
                     global_mask,
                     walk_path.prefixes,
                     None, // Pre-create stages no children, so it reaches no boundary
-                ))
+                )
                 .await;
                 (index, result)
             });

@@ -3040,7 +3040,7 @@ pub async fn resolve_diff3_base(
             vec![]
         };
 
-        let Some(common_ancestor) = Box::pin(find_common_ancestor_from_branch_points(
+        let Some(common_ancestor) = find_common_ancestor_from_branch_points(
             repository.clone(),
             source_branch,
             source_revision,
@@ -3048,7 +3048,7 @@ pub async fn resolve_diff3_base(
             target_branch,
             target_revision,
             &target_stack,
-        ))
+        )
         .await?
         else {
             return Err(InvalidArguments {

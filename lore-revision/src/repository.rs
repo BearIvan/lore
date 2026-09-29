@@ -2893,7 +2893,7 @@ pub async fn branch_switch(
             forward_changes: global.force(), /* Fast forward and stomp with local changes if forced */
             ..Default::default()
         };
-        Box::pin(sync::sync(repository.clone(), token, sync_options))
+        sync::sync(repository.clone(), token, sync_options)
             .await
             .forward::<RepositoryError>("Failed to synchronize state during branch switch")?;
     }

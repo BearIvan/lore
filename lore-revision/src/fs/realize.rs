@@ -280,7 +280,7 @@ pub async fn verify_filesystem_for_changes(
             let stats = stats.clone();
             async move {
                 let mut change = change;
-                let realize = Box::pin(verify_filesystem(
+                let realize = verify_filesystem(
                     &mut change,
                     repository_current,
                     operation,
@@ -289,7 +289,7 @@ pub async fn verify_filesystem_for_changes(
                     force_hash_check,
                     stats,
                     filter_mode,
-                ))
+                )
                 .await?;
 
                 Ok(realize.then_some(change))

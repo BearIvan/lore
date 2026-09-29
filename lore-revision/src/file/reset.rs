@@ -538,12 +538,8 @@ pub async fn reset(
         .into());
     }
 
-    let reset_link_count = Box::pin(reset_staged_links_under_paths(
-        repository.clone(),
-        token,
-        &paths,
-    ))
-    .await?;
+    let reset_link_count =
+        reset_staged_links_under_paths(repository.clone(), token, &paths).await?;
 
     let (state_current, state_staged, _branch) =
         State::deserialize_current_and_staged(repository.clone())

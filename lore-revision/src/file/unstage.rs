@@ -534,29 +534,17 @@ async fn unstage_each_path(args: UnstagePaths<'_>) -> Result<bool, UnstageError>
 
         lore_debug!("Unstage options: {:?}", options);
 
-        let mut task = {
-            let repository = repository.clone();
-            let state_current = state_current.clone();
-            let state_staged = state_staged.clone();
-            let discard = discard.clone();
-            let stats = stats.clone();
-            let link_tracker = link_tracker.clone();
-            let operation = operation.clone();
-            lore_spawn!(async move {
-                Box::pin(unstage_path(
-                    operation,
-                    repository,
-                    state_current,
-                    state_staged,
-                    relative_path,
-                    discard,
-                    options,
-                    stats,
-                    link_tracker,
-                ))
-                .await
-            })
-        };
+        let mut task = lore_spawn!(unstage_path(
+            operation.clone(),
+            repository.clone(),
+            state_current.clone(),
+            state_staged.clone(),
+            relative_path,
+            discard.clone(),
+            options,
+            stats.clone(),
+            link_tracker.clone(),
+        ));
 
         let mut ticker = tokio::time::interval(std::time::Duration::from_secs(1));
         let result = loop {
