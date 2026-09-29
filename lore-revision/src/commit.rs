@@ -2475,38 +2475,20 @@ async fn commit_execute(
     let mut commit_failure = None;
 
     while let Some(file_to_commit) = file_rx.recv().await {
-        lore_spawn!(tasks, {
-            let operation = operation.clone();
-            let repository = repository.clone();
-            let state = state.clone();
-            let delta = delta.clone();
-            let stats = stats.clone();
-            let tracker = tracker.clone();
-            let modified_times = modified_times.clone();
-            async move {
-                let block_index = NodeBlock::index(file_to_commit.node_id);
-                let node_index = Node::index(file_to_commit.node_id);
-                let block = state
-                    .block(repository.clone(), block_index)
-                    .await
-                    .forward::<CommitError>("Failed deserializing state block")?;
-                commit_file(
-                    operation,
-                    repository,
-                    state,
-                    file_to_commit.node_id,
-                    block,
-                    block_index,
-                    node_index,
-                    file_to_commit.relative_path,
-                    delta,
-                    stats,
-                    tracker,
-                    modified_times,
-                )
-                .await
-            }
-        });
+        lore_spawn!(
+            tasks,
+            commit_file(
+                operation.clone(),
+                repository.clone(),
+                state.clone(),
+                file_to_commit.node_id,
+                file_to_commit.relative_path,
+                delta.clone(),
+                stats.clone(),
+                tracker.clone(),
+                modified_times.clone(),
+            )
+        );
 
         while let Some(result) = tasks.try_join_next() {
             collect_committed_file(result, &mut commit_failure);
@@ -2559,170 +2541,177 @@ async fn info_before_fragmenting(
 
 /// Commits one file node, recording the modified time it read the file at. A view-excluded
 /// path records nothing: its content is taken from the staged node rather than disk.
-#[allow(clippy::too_many_arguments)]
-async fn commit_file(
+///
+/// Not an `async fn`, which would hold a second copy of its arguments.
+#[allow(clippy::too_many_arguments, clippy::manual_async_fn)]
+fn commit_file(
     operation: Arc<InstanceOperationImpl>,
     repository: Arc<RepositoryContext>,
     state: Arc<State>,
     node_id: NodeID,
-    block: Arc<NodeBlock>,
-    block_index: usize,
-    node_index: usize,
     relative_path: RelativePath,
     delta: Arc<parking_lot::RwLock<BytesMut>>,
     stats: Arc<CommitStats>,
     tracker: Arc<lore_storage::write_tracker::WriteTracker>,
     modified_times: Arc<RecordedModifiedTimes>,
-) -> Result<(), CommitError> {
-    let mut node = { *block.read().node(node_index) };
-
-    debug_assert!(node.is_file());
-
-    if node.is_staged_merge_conflict() {
-        reject_unresolved_conflict(&node, relative_path.as_str())?;
-        // Check if file has conflict markers remaining
-        if infer::infer_is_conflicted(&operation.content_source(&relative_path))
+) -> impl Future<Output = Result<(), CommitError>> {
+    async move {
+        let block_index = NodeBlock::index(node_id);
+        let node_index = Node::index(node_id);
+        let block = state
+            .block(repository.clone(), block_index)
             .await
-            .internal_with(|| format!("Failed reading file {}", relative_path.as_str()))?
-        {
-            return Err(Conflict {
-                path: relative_path.as_str().to_string(),
+            .forward::<CommitError>("Failed deserializing state block")?;
+        let mut node = { *block.read().node(node_index) };
+
+        debug_assert!(node.is_file());
+
+        if node.is_staged_merge_conflict() {
+            reject_unresolved_conflict(&node, relative_path.as_str())?;
+            // Check if file has conflict markers remaining
+            if infer::infer_is_conflicted(&operation.content_source(&relative_path))
+                .await
+                .internal_with(|| format!("Failed reading file {}", relative_path.as_str()))?
+            {
+                return Err(Conflict {
+                    path: relative_path.as_str().to_string(),
+                }
+                .into());
             }
-            .into());
-        }
-        // Clean up theirs/base files
-        if !execution_context().globals().dry_run() {
-            sync::unlink_merge_artifacts(&operation, &relative_path).await;
-        }
-    }
-
-    lore_trace!(
-        "Committing file node {} {} flags 0x{:x}",
-        node_id,
-        relative_path.as_str(),
-        node.flags
-    );
-
-    // A sparse checkout has no working-tree file for a view-excluded path, so
-    // the staged content hash is the only source. Re-fragmenting would read a
-    // file that is absent or stale.
-    //
-    // This test must stay identical to the one realize gates disk writes on
-    // (`fs/realize.rs`), because that is what decided whether the file was
-    // written.
-    let (address, content_size, mode, modified_time) =
-        if repository
-            .filter
-            .excludes_tree(&relative_path, false, FilterMode::View)
-        {
-            (node.address, node.size, node.mode, None)
-        } else {
-            if node.address.context.is_zero() {
-                // TODO(mjansson): Optionally find previous identical file content and deduplicate by using same context
-                node.address.context = uuid::Uuid::now_v7().into();
-                lore_trace!(
-                    "Generate file ID for file: {} {}",
-                    relative_path.as_str(),
-                    node.address.context
-                );
+            // Clean up theirs/base files
+            if !execution_context().globals().dry_run() {
+                sync::unlink_merge_artifacts(&operation, &relative_path).await;
             }
+        }
 
-            let info = info_before_fragmenting(&operation, &relative_path).await?;
-
-            let (address, size_content) = immutable::write_from_file_with_tracker(
-                repository.clone(),
-                &operation.content_source(&relative_path),
-                node.address.context,
-                immutable::write_options_from_repository(repository.clone()),
-                Some(tracker),
-            )
-            .await
-            .forward_with::<CommitError, _>(|| {
-                format!(
-                    "Failed writing file {} to immutable store",
-                    relative_path.as_str()
-                )
-            })?;
-
-            stats.file_read(size_content);
-
-            (
-                address,
-                size_content,
-                info.mode(node.mode),
-                Some(info.mtime()),
-            )
-        };
-
-    let modified = util::fs::mode_changed(node.mode, mode)
-        || node.size != content_size
-        || node.address.hash != address.hash;
-
-    if modified
-        || node.is_staged_add()
-        || node.is_staged_move()
-        || node.is_staged_copy()
-        || node.is_staged_merge()
-    {
         lore_trace!(
-            "Committed modified file node {} {} with address {} (was {}) mode 0o{:o} (was 0o{:o}) flags {:x}",
+            "Committing file node {} {} flags 0x{:x}",
             node_id,
             relative_path.as_str(),
-            address,
-            node.address.hash,
-            mode,
-            node.mode,
             node.flags
         );
-        stats
-            .complete
-            .file_modify_count
-            .fetch_add(1, Ordering::Relaxed);
-        stats.record_file_action(node.flags, content_size);
 
-        let flags = node.flags;
-        delta_add(delta, node_id, flags);
+        // A sparse checkout has no working-tree file for a view-excluded path, so
+        // the staged content hash is the only source. Re-fragmenting would read a
+        // file that is absent or stale.
+        //
+        // This test must stay identical to the one realize gates disk writes on
+        // (`fs/realize.rs`), because that is what decided whether the file was
+        // written.
+        let (address, content_size, mode, modified_time) =
+            if repository
+                .filter
+                .excludes_tree(&relative_path, false, FilterMode::View)
+            {
+                (node.address, node.size, node.mode, None)
+            } else {
+                if node.address.context.is_zero() {
+                    // TODO(mjansson): Optionally find previous identical file content and deduplicate by using same context
+                    node.address.context = uuid::Uuid::now_v7().into();
+                    lore_trace!(
+                        "Generate file ID for file: {} {}",
+                        relative_path.as_str(),
+                        node.address.context
+                    );
+                }
 
-        let block_dirtied = {
-            let mut block_writer = block.write();
-            let node = block_writer.node(node_index);
+                let info = info_before_fragmenting(&operation, &relative_path).await?;
 
-            node.address = address;
-            node.size = content_size;
-            node.mode = mode;
-            node.child = 0;
+                let (address, size_content) = immutable::write_from_file_with_tracker(
+                    repository.clone(),
+                    &operation.content_source(&relative_path),
+                    node.address.context,
+                    immutable::write_options_from_repository(repository.clone()),
+                    Some(tracker),
+                )
+                .await
+                .forward_with::<CommitError, _>(|| {
+                    format!(
+                        "Failed writing file {} to immutable store",
+                        relative_path.as_str()
+                    )
+                })?;
 
-            node.clear_all_change_flags();
+                stats.file_read(size_content);
 
-            block_writer.mark_dirty()
-        };
-        if block_dirtied {
-            state.block_modified(block.clone(), block_index);
-            state.mark_dirty();
+                (
+                    address,
+                    size_content,
+                    info.mode(node.mode),
+                    Some(info.mtime()),
+                )
+            };
+
+        let modified = util::fs::mode_changed(node.mode, mode)
+            || node.size != content_size
+            || node.address.hash != address.hash;
+
+        if modified
+            || node.is_staged_add()
+            || node.is_staged_move()
+            || node.is_staged_copy()
+            || node.is_staged_merge()
+        {
+            lore_trace!(
+                "Committed modified file node {} {} with address {} (was {}) mode 0o{:o} (was 0o{:o}) flags {:x}",
+                node_id,
+                relative_path.as_str(),
+                address,
+                node.address.hash,
+                mode,
+                node.mode,
+                node.flags
+            );
+            stats
+                .complete
+                .file_modify_count
+                .fetch_add(1, Ordering::Relaxed);
+            stats.record_file_action(node.flags, content_size);
+
+            let flags = node.flags;
+            delta_add(delta, node_id, flags);
+
+            let block_dirtied = {
+                let mut block_writer = block.write();
+                let node = block_writer.node(node_index);
+
+                node.address = address;
+                node.size = content_size;
+                node.mode = mode;
+                node.child = 0;
+
+                node.clear_all_change_flags();
+
+                block_writer.mark_dirty()
+            };
+            if block_dirtied {
+                state.block_modified(block.clone(), block_index);
+                state.mark_dirty();
+            }
+        } else if node.is_staged() {
+            lore_trace!("Reset staged flag on node {} {}", node_id, relative_path);
+
+            let block_dirtied = {
+                let mut block_writer = block.write();
+                let node = block_writer.node(node_index);
+                node.clear_all_change_flags();
+
+                block_writer.mark_dirty()
+            };
+            if block_dirtied {
+                state.block_modified(block.clone(), block_index);
+                state.mark_dirty();
+            }
         }
-    } else if node.is_staged() {
-        lore_trace!("Reset staged flag on node {} {}", node_id, relative_path);
 
-        let block_dirtied = {
-            let mut block_writer = block.write();
-            let node = block_writer.node(node_index);
-            node.clear_all_change_flags();
-
-            block_writer.mark_dirty()
-        };
-        if block_dirtied {
-            state.block_modified(block.clone(), block_index);
-            state.mark_dirty();
+        if let Some(modified_time) = modified_time {
+            modified_times.record(&repository, &relative_path, modified_time);
         }
+
+        stats.complete.file_count.fetch_add(1, Ordering::Relaxed);
+
+        Ok(())
     }
-
-    if let Some(modified_time) = modified_time {
-        modified_times.record(&repository, &relative_path, modified_time);
-    }
-
-    stats.complete.file_count.fetch_add(1, Ordering::Relaxed);
-
-    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]

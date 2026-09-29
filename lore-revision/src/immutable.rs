@@ -363,14 +363,17 @@ pub async fn read_into_file(
 
 /// Store a raw fragment: delegates to [`lore_storage::store_fragment`] with
 /// an optional remote session for durable upload.
-pub async fn store_raw(
+///
+/// Returns [`store_raw_with_tracker`]'s future itself: a future of its own would hold the arguments
+/// again beside it.
+pub fn store_raw(
     repository: Arc<RepositoryContext>,
     address: Address,
     fragment: Fragment,
     buffer: Bytes,
     cache_local: bool,
     remote_write: bool,
-) -> Result<Address, ImmutableError> {
+) -> impl Future<Output = Result<Address, ImmutableError>> {
     store_raw_with_tracker(
         repository,
         address,
@@ -380,7 +383,6 @@ pub async fn store_raw(
         remote_write,
         None,
     )
-    .await
 }
 
 /// Tracker-aware variant of [`store_raw`]. When `tracker` is `Some`, the
@@ -424,13 +426,17 @@ pub async fn store_raw_with_tracker(
 // Write / write_from_file / hash_file -- delegate to lore-storage directly
 // ---------------------------------------------------------------------------
 
-pub async fn write(
+/// Write content to the immutable store, returning its address.
+///
+/// Returns [`write_with_tracker`]'s future itself: a future of its own would hold the arguments
+/// again beside it.
+pub fn write(
     repository: Arc<RepositoryContext>,
     context: Context,
     buffer: Bytes,
     flags: WriteOptions,
-) -> Result<Address, ImmutableError> {
-    write_with_tracker(repository, context, buffer, flags, None).await
+) -> impl Future<Output = Result<Address, ImmutableError>> {
+    write_with_tracker(repository, context, buffer, flags, None)
 }
 
 /// Tracker-aware variant of [`write`].
@@ -463,13 +469,16 @@ pub async fn write_with_tracker(
 
 /// Write a file to the immutable store, returning its address and the size of the content that
 /// address stands for.
-pub async fn write_from_file(
+///
+/// Returns [`write_from_file_with_tracker`]'s future itself: a future of its own would hold the
+/// arguments again beside it.
+pub fn write_from_file(
     repository: Arc<RepositoryContext>,
     source: &lore_storage::ContentSource<'_>,
     context: Context,
     flags: WriteOptions,
-) -> Result<(Address, u64), ImmutableError> {
-    write_from_file_with_tracker(repository, source, context, flags, None).await
+) -> impl Future<Output = Result<(Address, u64), ImmutableError>> {
+    write_from_file_with_tracker(repository, source, context, flags, None)
 }
 
 /// Tracker-aware variant of [`write_from_file`].
