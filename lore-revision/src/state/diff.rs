@@ -407,6 +407,9 @@ async fn diff_subtree_walk(
 }
 
 /// Walks every queued subtree, and every subtree they queue, then joins the tasks they spawned.
+///
+/// Each directory's future is awaited in place, so the directories one task walks reuse the task's
+/// own allocation rather than taking a box apiece.
 async fn walk_pending_subtrees(
     work: &mut SubtreeWork,
     flags: DiffFlags,
@@ -415,19 +418,7 @@ async fn walk_pending_subtrees(
     stats: &DiffWalkStats,
 ) -> Result<(), StateError> {
     while let Some(subtree) = work.pending.pop() {
-        // Boxed for two reasons: it keeps one directory's state off the walk's own future,
-        // which every caller of `diff` holds and `clippy::large_futures` bounds, and it is
-        // what gives that future a size at all, since a directory dispatches walks and so
-        // names this one.
-        Box::pin(diff_subtree_node(
-            subtree,
-            flags,
-            changes,
-            filter_mode,
-            work,
-            stats,
-        ))
-        .await?;
+        diff_subtree_node(subtree, flags, changes, filter_mode, work, stats).await?;
     }
     while let Some(joined) = work.tasks.join_next().await {
         merge_subtree_task(joined, stats)?;
