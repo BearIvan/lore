@@ -502,6 +502,40 @@ async fn revision_tree_metadata_set_batch_survives_the_wire() {
     }
 }
 
+/// A bisect step relayed to the service carries both ends of the range.
+#[tokio::test]
+async fn revision_bisect_args_survive_the_wire() {
+    use lore::revision::LoreRevisionBisectArgs;
+
+    let args = LoreRevisionBisectArgs {
+        start: LoreString::from_str("main@3"),
+        end: LoreString::from_str("main@11"),
+    };
+
+    for (serialization, label) in [
+        (SerializationType::Json, "json"),
+        (SerializationType::Bincode, "bincode"),
+    ] {
+        let message = MessageToServer {
+            globals: LoreGlobalArgs::default(),
+            command: LoreCommand::RevisionBisect(args.clone()),
+        };
+        let message_bytes = write_v1_message(message, serialization).unwrap();
+        let processed: Result<Option<(V1Header, MessageToServer)>, MessageError> =
+            blocking_read_v1_message(&mut message_bytes.as_slice());
+        let processed = processed
+            .unwrap_or_else(|error| panic!("{label} must read back: {error:?}"))
+            .expect("a whole message must be present");
+
+        match processed.1.command {
+            LoreCommand::RevisionBisect(read_back) => {
+                assert_eq!(read_back, args, "{label} must carry every field unchanged");
+            }
+            other => panic!("Unexpected command: {other:?}"),
+        }
+    }
+}
+
 /// A cherry-pick routed through a service carries the metadata keys the revision it creates
 /// inherits: an array of text, and the last field of the struct.
 #[tokio::test]

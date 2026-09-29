@@ -120,6 +120,7 @@ pub enum LoreCommand {
     RevisionMetadataList(crate::revision::LoreRevisionMetadataListArgs),
     RevisionMetadataSet(crate::revision::LoreRevisionMetadataSetArgs),
     RevisionSync(crate::revision::LoreRevisionSyncArgs),
+    RevisionBisect(crate::revision::LoreRevisionBisectArgs),
     ServiceStart(crate::service::LoreServiceStartArgs),
     ServiceStop(crate::service::LoreServiceStopArgs),
     ServiceSetExecutable(crate::service::LoreServiceSetExecutableArgs),

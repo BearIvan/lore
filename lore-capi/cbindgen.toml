@@ -427,6 +427,7 @@ include = [
 "LoreRevisionSyncProgressEventData" = "lore_revision_sync_progress_event_data_t"
 "LoreRevisionSyncRevisionEventData" = "lore_revision_sync_revision_event_data_t"
 "LoreRevisionSyncTargetEventData" = "lore_revision_sync_target_event_data_t"
+"LoreRevisionBisectArgs" = "lore_revision_bisect_args_t"
 "LoreRevisionBisectEventData" = "lore_revision_bisect_event_data_t"
 "LoreRevisionRestoreArgs" = "lore_revision_restore_args_t"
 "LoreRevisionRestoreFileBeginEventData" = "lore_revision_restore_file_begin_event_data_t"

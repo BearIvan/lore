@@ -1820,6 +1820,21 @@ class Lore:
         """
         return self._capi_driver(library_path, "revision-sync", self.path, view)
 
+    def revision_bisect_capi(
+        self, library_path: str, start: str, end: str, keep_store_alive_seconds: int = 0
+    ) -> int:
+        """Take a bisect step through the public C API, returning the FFI code.
+        The stores are held open for `keep_store_alive_seconds` after the call,
+        none if `0`."""
+        return self._capi_driver(
+            library_path,
+            "revision-bisect",
+            self.path,
+            start,
+            end,
+            str(keep_store_alive_seconds),
+        )
+
     def layer_add(
         self,
         target_path: str,

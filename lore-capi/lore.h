@@ -4984,6 +4984,14 @@ typedef struct lore_revision_sync_args_t {
   struct lore_string_t view;
 } lore_revision_sync_args_t;
 
+// Arguments for bisecting the revision range between two revisions.
+typedef struct lore_revision_bisect_args_t {
+  // Starting (known-good) revision of the bisect range
+  struct lore_string_t start;
+  // Ending (known-bad) revision of the bisect range
+  struct lore_string_t end;
+} lore_revision_bisect_args_t;
+
 // Arguments for cherry-picking a revision onto the current branch.
 typedef struct lore_revision_cherry_pick_args_t {
   // Revision to cherry pick
@@ -10673,6 +10681,81 @@ int32_t lore_revision_sync(const struct lore_global_args_t *globals,
 void lore_revision_sync_async(const struct lore_global_args_t *globals,
                               const struct lore_revision_sync_args_t *args,
                               struct lore_event_callback_config_t callback);
+
+// Take one step of a bisect between two revisions, synchronizing the working directory to the
+// revision halfway between them.
+//
+// # Events
+//
+// Events are delivered via the callback as `lore_event_t`. Use the `tag` field to identify the event type.
+//
+// ## Standard Events
+//
+// These events are emitted by all interface functions:
+//
+// | Tag | Data Type | Description |
+// |-----|-----------|-------------|
+// | `LORE_EVENT_LOG` | `lore_log_event_data_t` | Diagnostic messages throughout execution |
+// | `LORE_EVENT_ERROR` | `lore_error_event_data_t` | Emitted for a non-fatal error during the operation |
+// | `LORE_EVENT_COMPLETE` | `lore_complete_event_data_t` | Always emitted at the end; `status` is `0` on success or the error code on failure |
+// | `LORE_EVENT_END` | `lore_end_event_data_t` | Always emitted after `COMPLETE` to signal callback termination |
+//
+// ## Bisect Events
+//
+// | Tag | Data Type | Description |
+// |-----|-----------|-------------|
+// | `LORE_EVENT_REVISION_BISECT` | `lore_revision_bisect_event_data_t` | Emitted once the working directory is synchronized to the selected revision, with the revision numbers of the range and whether the search is done |
+//
+// ## Sync Events
+//
+// | Tag | Data Type | Description |
+// |-----|-----------|-------------|
+// | `LORE_EVENT_REVISION_SYNC_TARGET` | `lore_revision_sync_target_event_data_t` | Emitted once after resolving the selected revision |
+// | `LORE_EVENT_REVISION_SYNC_FILE` | `lore_revision_sync_file_event_data_t` | Emitted for each file deleted, modified, added, or merged during sync |
+// | `LORE_EVENT_REVISION_SYNC_PROGRESS` | `lore_revision_sync_progress_event_data_t` | Emitted periodically during file realization and once at completion |
+// | `LORE_EVENT_REVISION_SYNC_REVISION` | `lore_revision_sync_revision_event_data_t` | Emitted once at the end with the resulting revision |
+// | `LORE_EVENT_REVISION_RESOLVE` | `lore_revision_resolve_event_data_t` | Emitted when resolving a revision |
+// | `LORE_EVENT_FILTER_EXCLUDE` | `lore_filter_exclude_event_data_t` | Emitted for each path excluded by view or ignore filters |
+int32_t lore_revision_bisect(const struct lore_global_args_t *globals,
+                             const struct lore_revision_bisect_args_t *args,
+                             struct lore_event_callback_config_t callback);
+
+// Asynchronous version of `lore_revision_bisect`.
+//
+// # Events
+//
+// Events are delivered via the callback as `lore_event_t`. Use the `tag` field to identify the event type.
+//
+// ## Standard Events
+//
+// These events are emitted by all interface functions:
+//
+// | Tag | Data Type | Description |
+// |-----|-----------|-------------|
+// | `LORE_EVENT_LOG` | `lore_log_event_data_t` | Diagnostic messages throughout execution |
+// | `LORE_EVENT_ERROR` | `lore_error_event_data_t` | Emitted for a non-fatal error during the operation |
+// | `LORE_EVENT_COMPLETE` | `lore_complete_event_data_t` | Always emitted at the end; `status` is `0` on success or the error code on failure |
+// | `LORE_EVENT_END` | `lore_end_event_data_t` | Always emitted after `COMPLETE` to signal callback termination |
+//
+// ## Bisect Events
+//
+// | Tag | Data Type | Description |
+// |-----|-----------|-------------|
+// | `LORE_EVENT_REVISION_BISECT` | `lore_revision_bisect_event_data_t` | Emitted once the working directory is synchronized to the selected revision, with the revision numbers of the range and whether the search is done |
+//
+// ## Sync Events
+//
+// | Tag | Data Type | Description |
+// |-----|-----------|-------------|
+// | `LORE_EVENT_REVISION_SYNC_TARGET` | `lore_revision_sync_target_event_data_t` | Emitted once after resolving the selected revision |
+// | `LORE_EVENT_REVISION_SYNC_FILE` | `lore_revision_sync_file_event_data_t` | Emitted for each file deleted, modified, added, or merged during sync |
+// | `LORE_EVENT_REVISION_SYNC_PROGRESS` | `lore_revision_sync_progress_event_data_t` | Emitted periodically during file realization and once at completion |
+// | `LORE_EVENT_REVISION_SYNC_REVISION` | `lore_revision_sync_revision_event_data_t` | Emitted once at the end with the resulting revision |
+// | `LORE_EVENT_REVISION_RESOLVE` | `lore_revision_resolve_event_data_t` | Emitted when resolving a revision |
+// | `LORE_EVENT_FILTER_EXCLUDE` | `lore_filter_exclude_event_data_t` | Emitted for each path excluded by view or ignore filters |
+void lore_revision_bisect_async(const struct lore_global_args_t *globals,
+                                const struct lore_revision_bisect_args_t *args,
+                                struct lore_event_callback_config_t callback);
 
 // Cherry-pick a revision onto the current branch, applying its changes to the working tree.
 //

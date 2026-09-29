@@ -24,6 +24,7 @@ use lore::interface::LoreMetadata;
 use lore::interface::LoreMetadataEventData;
 use lore::interface::LoreMetadataType;
 use lore::interface::LoreRevisionAmendArgs;
+use lore::interface::LoreRevisionBisectArgs;
 use lore::interface::LoreRevisionBisectEventData;
 use lore::interface::LoreRevisionCommitArgs;
 use lore::interface::LoreRevisionCommitRevisionEventData;
@@ -44,7 +45,6 @@ use lore::interface::LoreRevisionSyncRevisionEventData;
 use lore::interface::LoreString;
 use lore::interface::metadata;
 use lore::revision;
-use lore::revision::LoreRevisionBisectArgs;
 use lore::revision::LoreRevisionFindArgs;
 use parking_lot::Mutex;
 
@@ -1559,7 +1559,7 @@ pub fn handle_revision_bisect(globals: LoreGlobalArgs, args: &RevisionBisectArgs
         }) as EventCallbackFn)
             .with_defaults(),
     ));
-    revision::bisect(globals, bisect_args, callback) as u8
+    run_command(globals, bisect_args.into(), callback) as u8
 }
 
 pub fn handle_revision_diff(globals: LoreGlobalArgs, args: &RevisionDiffArgs) -> u8 {

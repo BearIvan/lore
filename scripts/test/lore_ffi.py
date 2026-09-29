@@ -15,6 +15,7 @@ Run as a script, this module is the driver a test invokes as a subprocess:
     python lore_ffi.py service-stop <library-path>
     python lore_ffi.py repository-delete <library-path> <repository-path> <repository-url>
     python lore_ffi.py revision-sync <library-path> <repository-path> <view-file>
+    python lore_ffi.py revision-bisect <library-path> <repository-path> <start> <end> <keep-store-alive-seconds>
 
 exiting with the call's FFI code. Tests go through `Lore`'s `*_capi` methods
 rather than importing `LoreLibrary` directly:
@@ -169,6 +170,13 @@ class LoreRevisionSyncArgs(Structure):
     ]
 
 
+class LoreRevisionBisectArgs(Structure):
+    """`lore_revision_bisect_args_t`. `start` is the latest revision known not to
+    hold the change, `end` the earliest known to hold it."""
+
+    _fields_ = [("start", LoreString), ("end", LoreString)]
+
+
 # Every struct above, paired with the header type it mirrors. A struct bound
 # here belongs in this list: it is what test_lore_ffi.py checks the mirrors
 # against, so a field added to the C API is reported as a named mismatch rather
@@ -184,6 +192,7 @@ MIRRORED_STRUCTS = [
     ("lore_service_stop_args_t", LoreServiceStopArgs),
     ("lore_repository_delete_args_t", LoreRepositoryDeleteArgs),
     ("lore_revision_sync_args_t", LoreRevisionSyncArgs),
+    ("lore_revision_bisect_args_t", LoreRevisionBisectArgs),
 ]
 
 # One field per line, either a function pointer (`void (*func)(...)`) or a plain
@@ -256,6 +265,12 @@ class LoreLibrary:
         self._lib.lore_revision_sync.argtypes = [
             POINTER(LoreGlobalArgs),
             POINTER(LoreRevisionSyncArgs),
+            LoreEventCallbackConfig,
+        ]
+        self._lib.lore_revision_bisect.restype = c_int32
+        self._lib.lore_revision_bisect.argtypes = [
+            POINTER(LoreGlobalArgs),
+            POINTER(LoreRevisionBisectArgs),
             LoreEventCallbackConfig,
         ]
 
@@ -365,6 +380,33 @@ class LoreLibrary:
             LoreEventCallbackConfig(0, None),
         )
 
+    def revision_bisect(
+        self, repository_path: str, start: str, end: str, keep_store_alive_seconds: int
+    ) -> int:
+        """Call `lore_revision_bisect` over the range from `start` to `end`,
+        returning its FFI code. The stores stay open for
+        `keep_store_alive_seconds` after the call, none if `0`."""
+        # Encoded buffers must outlive the call; keep references on the stack.
+        path_bytes = repository_path.encode()
+        start_bytes = start.encode()
+        end_bytes = end.encode()
+
+        globals_args = LoreGlobalArgs()
+        globals_args.repository_path = LoreString(path_bytes, len(path_bytes))
+        globals_args.store_keep_alive = keep_store_alive_seconds != 0
+        globals_args.store_keep_alive_seconds = keep_store_alive_seconds
+
+        args = LoreRevisionBisectArgs(
+            LoreString(start_bytes, len(start_bytes)),
+            LoreString(end_bytes, len(end_bytes)),
+        )
+
+        return self._lib.lore_revision_bisect(
+            ctypes.byref(globals_args),
+            ctypes.byref(args),
+            LoreEventCallbackConfig(0, None),
+        )
+
 
 USAGE = """usage:
   lore_ffi.py auth-user-info <library-path> <repository-path> [user-id...]
@@ -372,7 +414,8 @@ USAGE = """usage:
   lore_ffi.py service-start <library-path>
   lore_ffi.py service-stop <library-path>
   lore_ffi.py repository-delete <library-path> <repository-path> <repository-url>
-  lore_ffi.py revision-sync <library-path> <repository-path> <view-file>"""
+  lore_ffi.py revision-sync <library-path> <repository-path> <view-file>
+  lore_ffi.py revision-bisect <library-path> <repository-path> <start> <end> <keep-store-alive-seconds>"""
 
 
 def main(argv: list[str]) -> int:
@@ -393,6 +436,10 @@ def main(argv: list[str]) -> int:
             )
         case ["revision-sync", library_path, repository_path, view]:
             return LoreLibrary(library_path).revision_sync(repository_path, view)
+        case ["revision-bisect", library_path, repository_path, start, end, keep_alive]:
+            return LoreLibrary(library_path).revision_bisect(
+                repository_path, start, end, int(keep_alive)
+            )
         case _:
             print(USAGE, file=sys.stderr)
             return 2
