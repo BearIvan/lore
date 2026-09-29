@@ -3,6 +3,7 @@
 import base64
 import json
 import logging
+import os
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,7 @@ from lore_server import (
     generate_server_config,
     launch_lore_server,
 )
+from service_util import LORE_SERVICE_ENVIRONMENT
 
 from lore import Lore
 
@@ -43,6 +45,38 @@ def test_auth_info_not_supported_without_auth_endpoint(new_lore_repo):
 
     with pytest.raises(NotSupportedError):
         repo.run(urc_args=["auth", "info"])
+
+
+@pytest.mark.smoke
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["auth", "info"],
+        ["auth", "login", "--no-browser"],
+        ["auth", "login", "--token-type", "lore", "--token", "unused"],
+        ["auth", "logout"],
+    ],
+    ids=["info", "login", "login-with-token", "logout"],
+)
+def test_auth_resolves_a_relative_repository_against_the_caller(
+    new_lore_repo, lore_service_runner, tmp_path, command
+):
+    """These commands read the remote from the repository at `--repository`.
+    The service runs in a directory unrelated to the caller's, so it must
+    resolve a relative path where the caller ran and reach the authless test
+    server, which answers `NotSupported`."""
+    service_directory = tmp_path / "service_elsewhere"
+    service_directory.mkdir()
+    lore_service_runner.start(str(service_directory))
+
+    repo: Lore = new_lore_repo(environment_vars=LORE_SERVICE_ENVIRONMENT.copy())
+
+    with pytest.raises(NotSupportedError):
+        repo.run(
+            urc_args=command,
+            path=os.path.basename(repo.path),
+            cwd=os.path.dirname(repo.path),
+        )
 
 
 @pytest.mark.smoke

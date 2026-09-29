@@ -368,6 +368,7 @@ include = [
 "LoreRepositoryDumpEndEventData" = "lore_repository_dump_end_event_data_t"
 "LoreRepositoryCreateArgs" = "lore_repository_create_args_t"
 "LoreRepositoryCreateEventData" = "lore_repository_create_event_data_t"
+"LoreRepositoryDeleteArgs" = "lore_repository_delete_args_t"
 "LoreRepositoryFlushArgs" = "lore_repository_flush_args_t"
 "LoreRepositoryGcArgs" = "lore_repository_gc_args_t"
 "LoreRepositoryReleaseArgs" = "lore_repository_release_args_t"

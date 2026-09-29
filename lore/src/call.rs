@@ -217,20 +217,27 @@ where
         .await
 }
 
+/// Resolves `globals.repository_path` against the call's working directory and records the result
+/// in `globals`. Left as given when it cannot be resolved.
+pub(crate) fn resolve_repository_path(globals: &mut LoreGlobalArgs) -> PathBuf {
+    match util::path::make_absolute_from(
+        globals.repository_path.as_str(),
+        globals.working_directory().map(Path::new),
+    ) {
+        Ok(path) => {
+            globals.repository_path = path.display().to_string().into();
+            path
+        }
+        Err(_) => PathBuf::from(globals.repository_path.as_str()),
+    }
+}
+
 /// On `Err`, the error has already been dispatched to the callback.
 async fn prepare_repository_call(
     mut globals: LoreGlobalArgs,
     callback: LoreEventCallback,
 ) -> Result<(PathBuf, Arc<ExecutionContext>), i32> {
-    let repository_path = if let Ok(path) = util::path::make_absolute_from(
-        globals.repository_path.as_str(),
-        globals.working_directory().map(Path::new),
-    ) {
-        globals.repository_path = path.display().to_string().into();
-        path
-    } else {
-        PathBuf::from(globals.repository_path.as_str())
-    };
+    let repository_path = resolve_repository_path(&mut globals);
 
     let execution = setup_execution(globals, callback);
 

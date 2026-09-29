@@ -7,6 +7,7 @@ use lore::remote::message::SerializationType;
 use lore::remote::message::V1Header;
 use lore::remote::message::blocking_read_v1_message;
 use lore::remote::message::write_v1_message;
+use lore::repository::LoreRepositoryDeleteArgs;
 use lore::repository::LoreRepositoryStatusArgs;
 use lore::revision_tree::add::LoreRevisionTreeAddArgs;
 use lore::revision_tree::add::LoreRevisionTreeAddEntry;
@@ -81,6 +82,38 @@ async fn message_to_server_to_and_from_bytes() {
         }
         _ => {
             panic!("Unexpected command");
+        }
+    }
+}
+
+/// A delete names its repository by text alone, so the service deletes the repository the caller
+/// named only if that text crosses the wire unchanged.
+#[tokio::test]
+async fn repository_delete_survives_the_wire() {
+    let args = LoreRepositoryDeleteArgs {
+        repository_url: LoreString::from_str("lore://127.0.0.1:41337/org/project"),
+    };
+
+    for (serialization, label) in [
+        (SerializationType::Json, "json"),
+        (SerializationType::Bincode, "bincode"),
+    ] {
+        let message = MessageToServer {
+            globals: LoreGlobalArgs::default(),
+            command: LoreCommand::RepositoryDelete(args.clone()),
+        };
+        let message_bytes = write_v1_message(message, serialization).unwrap();
+        let processed: Result<Option<(V1Header, MessageToServer)>, MessageError> =
+            blocking_read_v1_message(&mut message_bytes.as_slice());
+        let processed = processed
+            .unwrap_or_else(|error| panic!("{label} must read back: {error:?}"))
+            .expect("a whole message must be present");
+
+        match processed.1.command {
+            LoreCommand::RepositoryDelete(read_back) => {
+                assert_eq!(read_back, args, "{label} must carry the URL unchanged");
+            }
+            other => panic!("Unexpected command: {other:?}"),
         }
     }
 }

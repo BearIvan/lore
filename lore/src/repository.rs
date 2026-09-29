@@ -588,36 +588,49 @@ async fn create_with_metadata_impl(
 
 /// Arguments for deleting a remote repository.
 #[repr(C)]
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, LoreArgs)]
+#[handler(delete_local)]
 pub struct LoreRepositoryDeleteArgs {
-    /// URL of the remote repository to delete
+    /// URL of the remote repository to delete, or a name or ID resolved against the remote of
+    /// the repository at `repository_path`
     pub repository_url: LoreString,
 }
 
-/// Deletes a remote repository. Blocks on the runtime, so it is called from outside it.
-pub fn delete(
+/// Deletes a remote repository.
+///
+/// # Events
+///
+/// ## Standard Events
+///
+/// These events are emitted by all interface functions:
+///
+/// | Event | Description |
+/// |-------|-------------|
+/// | [`LoreEvent::Log`](crate::interface::LoreEvent::Log) | Diagnostic messages throughout execution |
+/// | [`LoreEvent::Error`](crate::interface::LoreEvent::Error) | Emitted for a non-fatal error during the operation |
+/// | [`LoreEvent::Complete`](crate::interface::LoreEvent::Complete) | Always emitted at the end; `status` is `0` on success or the error code on failure |
+/// | [`LoreEvent::End`](crate::interface::LoreEvent::End) | Always emitted after `Complete` to signal callback termination |
+pub async fn delete(
     globals: LoreGlobalArgs,
     args: LoreRepositoryDeleteArgs,
     callback: LoreEventCallback,
 ) -> i32 {
-    let execution = setup_execution(globals, callback);
+    dispatch_call(globals, args, callback, delete_local).await
+}
 
-    crate::runtime().block_on(LORE_CONTEXT.scope(execution, async move {
-        log_command_info(&delete, &args);
-
-        let time_start = Instant::now();
-
-        let repository_url = args.repository_url.as_str();
-
-        let result = lore_revision::repository::delete::delete(
-            repository_url,
+async fn delete_local(
+    globals: LoreGlobalArgs,
+    args: LoreRepositoryDeleteArgs,
+    callback: LoreEventCallback,
+) -> i32 {
+    no_repository_call(globals, callback, args, delete, |args| async move {
+        repository::delete::delete(
+            args.repository_url.as_str(),
             execution_context().globals().identity().unwrap_or_default(),
         )
-        .await;
-
-        log_command_done(&delete, time_start);
-        execution_context().dispatcher.complete_result(result).await
-    }))
+        .await
+    })
+    .await
 }
 
 /// Arguments for releasing cached store references for the repository path.

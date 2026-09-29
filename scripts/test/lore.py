@@ -1790,6 +1790,13 @@ class Lore:
         """
         return self._capi_driver(library_path, command)
 
+    def repository_delete_capi(self, library_path: str) -> int:
+        """Delete this repository's remote through the public C API, returning
+        the FFI code."""
+        return self._capi_driver(
+            library_path, "repository-delete", self.path, self.remote_path
+        )
+
     def revision_sync_capi(self, library_path: str, view: str = "") -> int:
         """Sync through the public C API, returning the FFI code.
 

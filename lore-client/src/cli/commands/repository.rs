@@ -31,7 +31,6 @@ use lore::interface::LoreRepositoryVerifyFragmentArgs;
 use lore::interface::LoreRepositoryVerifyStateArgs;
 use lore::interface::LoreSharedStoreMode;
 use lore::interface::LoreString;
-use lore::repository;
 use lore::repository::LoreRepositoryDeleteArgs;
 use lore::repository::LoreVfsType;
 use parking_lot::Mutex;
@@ -972,7 +971,7 @@ pub fn handle_repository_delete(globals: LoreGlobalArgs, args: &RepositoryDelete
             .with_defaults(),
     ));
 
-    return repository::delete(globals, args, callback) as u8;
+    return run_command(globals, args.into(), callback) as u8;
 }
 
 fn format_clone_retain_replace(retain: u64, replace: u64) -> String {

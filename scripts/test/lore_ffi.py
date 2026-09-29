@@ -12,6 +12,7 @@ Run as a script, this module is the driver a test invokes as a subprocess:
     python lore_ffi.py auth-user-info <library-path> <repository-path> [user-id...]
     python lore_ffi.py service-start <library-path>
     python lore_ffi.py service-stop <library-path>
+    python lore_ffi.py repository-delete <library-path> <repository-path> <repository-url>
     python lore_ffi.py revision-sync <library-path> <repository-path> <view-file>
 
 exiting with the call's FFI code. Tests go through `Lore`'s `*_capi` methods
@@ -138,6 +139,12 @@ class LoreServiceStopArgs(Structure):
     _fields_ = [("_unused", c_int)]
 
 
+class LoreRepositoryDeleteArgs(Structure):
+    """`lore_repository_delete_args_t`."""
+
+    _fields_ = [("repository_url", LoreString)]
+
+
 class LoreRevisionSyncArgs(Structure):
     """`lore_revision_sync_args_t`. `view` names the view filter file the
     working tree is left materialized under, empty to keep the instance's own."""
@@ -166,6 +173,7 @@ MIRRORED_STRUCTS = [
     ("lore_auth_user_info_args_t", LoreAuthUserInfoArgs),
     ("lore_service_start_args_t", LoreServiceStartArgs),
     ("lore_service_stop_args_t", LoreServiceStopArgs),
+    ("lore_repository_delete_args_t", LoreRepositoryDeleteArgs),
     ("lore_revision_sync_args_t", LoreRevisionSyncArgs),
 ]
 
@@ -223,6 +231,12 @@ class LoreLibrary:
             POINTER(LoreServiceStopArgs),
             LoreEventCallbackConfig,
         ]
+        self._lib.lore_repository_delete.restype = c_int32
+        self._lib.lore_repository_delete.argtypes = [
+            POINTER(LoreGlobalArgs),
+            POINTER(LoreRepositoryDeleteArgs),
+            LoreEventCallbackConfig,
+        ]
         self._lib.lore_revision_sync.restype = c_int32
         self._lib.lore_revision_sync.argtypes = [
             POINTER(LoreGlobalArgs),
@@ -275,6 +289,24 @@ class LoreLibrary:
             LoreEventCallbackConfig(0, None),
         )
 
+    def repository_delete(self, repository_path: str, repository_url: str) -> int:
+        """Call `lore_repository_delete` for `repository_url`, returning its FFI
+        code."""
+        # Encoded buffers must outlive the call; keep references on the stack.
+        path_bytes = repository_path.encode()
+        url_bytes = repository_url.encode()
+
+        globals_args = LoreGlobalArgs()
+        globals_args.repository_path = LoreString(path_bytes, len(path_bytes))
+
+        args = LoreRepositoryDeleteArgs(LoreString(url_bytes, len(url_bytes)))
+
+        return self._lib.lore_repository_delete(
+            ctypes.byref(globals_args),
+            ctypes.byref(args),
+            LoreEventCallbackConfig(0, None),
+        )
+
     def revision_sync(self, repository_path: str, view: str) -> int:
         """Call `lore_revision_sync` with `view` and nothing else set, returning
         its FFI code.
@@ -304,6 +336,7 @@ USAGE = """usage:
   lore_ffi.py auth-user-info <library-path> <repository-path> [user-id...]
   lore_ffi.py service-start <library-path>
   lore_ffi.py service-stop <library-path>
+  lore_ffi.py repository-delete <library-path> <repository-path> <repository-url>
   lore_ffi.py revision-sync <library-path> <repository-path> <view-file>"""
 
 
@@ -315,6 +348,10 @@ def main(argv: list[str]) -> int:
             return LoreLibrary(library_path).service_start()
         case ["service-stop", library_path]:
             return LoreLibrary(library_path).service_stop()
+        case ["repository-delete", library_path, repository_path, repository_url]:
+            return LoreLibrary(library_path).repository_delete(
+                repository_path, repository_url
+            )
         case ["revision-sync", library_path, repository_path, view]:
             return LoreLibrary(library_path).revision_sync(repository_path, view)
         case _:

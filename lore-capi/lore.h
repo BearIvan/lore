@@ -4740,6 +4740,13 @@ typedef struct lore_repository_create_args_t {
   struct lore_string_t shared_store_path;
 } lore_repository_create_args_t;
 
+// Arguments for deleting a remote repository.
+typedef struct lore_repository_delete_args_t {
+  // URL of the remote repository to delete, or a name or ID resolved against the remote of
+  // the repository at `repository_path`
+  struct lore_string_t repository_url;
+} lore_repository_delete_args_t;
+
 // Arguments for waiting on outstanding asynchronous repository tasks.
 typedef struct lore_repository_flush_args_t {
   int _unused;
@@ -9366,6 +9373,46 @@ int32_t lore_repository_create(const struct lore_global_args_t *globals,
 // | `LORE_EVENT_REPOSITORY_CREATE` | `lore_repository_create_event_data_t` | Emitted when the repository has been successfully created |
 void lore_repository_create_async(const struct lore_global_args_t *globals,
                                   const struct lore_repository_create_args_t *args,
+                                  struct lore_event_callback_config_t callback);
+
+// Delete a Lore repository on the remote server.
+//
+// # Events
+//
+// Events are delivered via the callback as `lore_event_t`. Use the `tag` field to identify the event type.
+//
+// ## Standard Events
+//
+// These events are emitted by all interface functions:
+//
+// | Tag | Data Type | Description |
+// |-----|-----------|-------------|
+// | `LORE_EVENT_LOG` | `lore_log_event_data_t` | Diagnostic messages throughout execution |
+// | `LORE_EVENT_ERROR` | `lore_error_event_data_t` | Emitted for a non-fatal error during the operation |
+// | `LORE_EVENT_COMPLETE` | `lore_complete_event_data_t` | Always emitted at the end; `status` is `0` on success or the error code on failure |
+// | `LORE_EVENT_END` | `lore_end_event_data_t` | Always emitted after `COMPLETE` to signal callback termination |
+int32_t lore_repository_delete(const struct lore_global_args_t *globals,
+                               const struct lore_repository_delete_args_t *args,
+                               struct lore_event_callback_config_t callback);
+
+// Asynchronous version of `lore_repository_delete`.
+//
+// # Events
+//
+// Events are delivered via the callback as `lore_event_t`. Use the `tag` field to identify the event type.
+//
+// ## Standard Events
+//
+// These events are emitted by all interface functions:
+//
+// | Tag | Data Type | Description |
+// |-----|-----------|-------------|
+// | `LORE_EVENT_LOG` | `lore_log_event_data_t` | Diagnostic messages throughout execution |
+// | `LORE_EVENT_ERROR` | `lore_error_event_data_t` | Emitted for a non-fatal error during the operation |
+// | `LORE_EVENT_COMPLETE` | `lore_complete_event_data_t` | Always emitted at the end; `status` is `0` on success or the error code on failure |
+// | `LORE_EVENT_END` | `lore_end_event_data_t` | Always emitted after `COMPLETE` to signal callback termination |
+void lore_repository_delete_async(const struct lore_global_args_t *globals,
+                                  const struct lore_repository_delete_args_t *args,
                                   struct lore_event_callback_config_t callback);
 
 // Flush pending repository state to persistent storage.
