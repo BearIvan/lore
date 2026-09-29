@@ -357,6 +357,38 @@ mod tests {
         });
     }
 
+    /// `lore_link_list_staged` decides at the entry whether to relay, so with
+    /// relaying on it goes to the service, which holds the repository, rather
+    /// than opening the repository here.
+    ///
+    /// No service can be reached, and the directory named holds no repository, so
+    /// a call that ran here would fail differently.
+    #[test]
+    #[serial]
+    fn the_link_list_staged_entry_point_relays_to_the_service() {
+        let settings = machine_settings("service-api-link-list-staged-");
+        let missing = settings.path().join("no-such-lore");
+        lore::runtime().block_on(async {
+            assert_eq!(set_use_automatically(true).await, 0);
+            assert_eq!(set_executable(&missing.to_string_lossy()).await, 0);
+        });
+
+        let globals = LoreGlobalArgs {
+            repository_path: settings.path().display().to_string().into(),
+            ..LoreGlobalArgs::default()
+        };
+
+        assert_eq!(
+            lore::interface::lore_link_list_staged(
+                &globals,
+                &lore::link::LoreLinkListStagedArgs {},
+                no_callback()
+            ),
+            unavailable_code(),
+            "the entry point must relay the call rather than run it here"
+        );
+    }
+
     /// Turning the setting off turns relaying off within the process, for the
     /// same reason.
     #[test]

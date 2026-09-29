@@ -86,6 +86,35 @@ async fn message_to_server_to_and_from_bytes() {
     }
 }
 
+/// A command whose arguments carry no fields still has to reach the service as
+/// itself, in both serializations.
+#[tokio::test]
+async fn link_list_staged_survives_the_wire() {
+    use lore::link::LoreLinkListStagedArgs;
+
+    for (serialization, label) in [
+        (SerializationType::Json, "json"),
+        (SerializationType::Bincode, "bincode"),
+    ] {
+        let message = MessageToServer {
+            globals: LoreGlobalArgs::default(),
+            command: LoreCommand::LinkListStaged(LoreLinkListStagedArgs {}),
+        };
+        let message_bytes = write_v1_message(message, serialization).unwrap();
+        let processed: Result<Option<(V1Header, MessageToServer)>, MessageError> =
+            blocking_read_v1_message(&mut message_bytes.as_slice());
+        let processed = processed
+            .unwrap_or_else(|error| panic!("{label} must read back: {error:?}"))
+            .expect("a whole message must be present");
+
+        assert!(
+            matches!(processed.1.command, LoreCommand::LinkListStaged(_)),
+            "{label} must read back as the same command: {:?}",
+            processed.1.command
+        );
+    }
+}
+
 /// A LATEST history listing relayed to the service carries the branch and the entry limit.
 #[tokio::test]
 async fn branch_latest_list_args_survive_the_wire() {

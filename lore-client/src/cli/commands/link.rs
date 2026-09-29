@@ -14,6 +14,7 @@ use lore::link::LinkFlags;
 use lore::link::LoreLinkAddArgs;
 use lore::link::LoreLinkInfoArgs;
 use lore::link::LoreLinkListArgs;
+use lore::link::LoreLinkListStagedArgs;
 use lore::link::LoreLinkRemoveArgs;
 use lore::link::LoreLinkStagedState;
 use lore::link::LoreLinkUpdateArgs;
@@ -393,7 +394,10 @@ fn handle_link_list_staged(globals: LoreGlobalArgs) -> u8 {
             .with_defaults(),
     );
 
-    lore::link::list_staged(globals, callback);
+    let status = run_command(globals, LoreLinkListStagedArgs {}.into(), callback) as u8;
+    if status != 0 {
+        return status;
+    }
 
     let links = discovered_links.lock();
     if links.is_empty() {

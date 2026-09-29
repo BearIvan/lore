@@ -31,6 +31,8 @@ Release notes for the open source Lore project. Releases before v0.8.4 predate t
 
 ### Fixes & Improvements
 
+- `lore link list --staged`, and an interactive `lore commit` listing the links it asks a message for, run in the Lore service when one is in use, as other commands do, rather than opening the repository in the client, where they waited on the lock of a service holding it. C API: `lore_link_list_staged` and `lore_link_list_staged_async` expose the listing
+- `lore commit` stops with the failure of listing the links or layers its per-link and per-layer messages are resolved against, such as a Lore service in use that cannot be reached, where it rejected a `--link-message` or `--layer-message` path as matching nothing, or committed without asking for those messages
 - `lore repository instance prune` no longer removes an SWFS instance when run without the Lore service, where the instance is not mounted and its path is absent or an empty directory. Its external `.lore` in the global data directory shows it still exists, so `lore repository instance list` reports it as live and prune keeps its branch and revision anchors
 - Fix resolving another user's name failing against an auth service reached by IP address over `http://` or `https://`
 - A `lore_string_t` or `lore_binary_t` a caller passes in with a NULL pointer and a non-zero `length` reads as empty rather than as undefined behaviour, which is what an empty `lore_array_t` already did. The library answers NULL for every empty string it emits, so one can come back in an argument struct beside a length the caller kept itself, and the pointer alone decides whether there are bytes to read

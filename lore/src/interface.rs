@@ -3860,6 +3860,70 @@ pub extern "C" fn lore_link_list_async(
     run_asynchronously(globals, args, callback, dispatch_command);
 }
 
+pub type LoreLinkListStagedArgs = crate::link::LoreLinkListStagedArgs;
+
+/// List the links whose linked repositories hold staged changes, including nested links.
+///
+/// # Events
+///
+/// Events are delivered via the callback as `lore_event_t`. Use the `tag` field to identify the event type.
+///
+/// ## Standard Events
+///
+/// These events are emitted by all interface functions:
+///
+/// | Tag | Data Type | Description |
+/// |-----|-----------|-------------|
+/// | `LORE_EVENT_LOG` | `lore_log_event_data_t` | Diagnostic messages throughout execution |
+/// | `LORE_EVENT_ERROR` | `lore_error_event_data_t` | Emitted for a non-fatal error during the operation |
+/// | `LORE_EVENT_COMPLETE` | `lore_complete_event_data_t` | Always emitted at the end; `status` is `0` on success or the error code on failure |
+/// | `LORE_EVENT_END` | `lore_end_event_data_t` | Always emitted after `COMPLETE` to signal callback termination |
+///
+/// ## Link Events
+///
+/// | Tag | Data Type | Description |
+/// |-----|-----------|-------------|
+/// | `LORE_EVENT_LINK_STAGED_ENTRY` | `lore_link_staged_entry_event_data_t` | Emitted for each link with staged changes |
+#[unsafe(no_mangle)]
+pub extern "C" fn lore_link_list_staged(
+    globals: &LoreGlobalArgs,
+    args: &LoreLinkListStagedArgs,
+    callback: LoreEventCallbackConfig,
+) -> i32 {
+    run_synchronously(globals, args, callback, run_command)
+}
+
+/// Asynchronous version of `lore_link_list_staged`.
+///
+/// # Events
+///
+/// Events are delivered via the callback as `lore_event_t`. Use the `tag` field to identify the event type.
+///
+/// ## Standard Events
+///
+/// These events are emitted by all interface functions:
+///
+/// | Tag | Data Type | Description |
+/// |-----|-----------|-------------|
+/// | `LORE_EVENT_LOG` | `lore_log_event_data_t` | Diagnostic messages throughout execution |
+/// | `LORE_EVENT_ERROR` | `lore_error_event_data_t` | Emitted for a non-fatal error during the operation |
+/// | `LORE_EVENT_COMPLETE` | `lore_complete_event_data_t` | Always emitted at the end; `status` is `0` on success or the error code on failure |
+/// | `LORE_EVENT_END` | `lore_end_event_data_t` | Always emitted after `COMPLETE` to signal callback termination |
+///
+/// ## Link Events
+///
+/// | Tag | Data Type | Description |
+/// |-----|-----------|-------------|
+/// | `LORE_EVENT_LINK_STAGED_ENTRY` | `lore_link_staged_entry_event_data_t` | Emitted for each link with staged changes |
+#[unsafe(no_mangle)]
+pub extern "C" fn lore_link_list_staged_async(
+    globals: &LoreGlobalArgs,
+    args: &LoreLinkListStagedArgs,
+    callback: LoreEventCallbackConfig,
+) {
+    run_asynchronously(globals, args, callback, dispatch_command);
+}
+
 pub type LoreLinkUpdateArgs = crate::link::LoreLinkUpdateArgs;
 
 /// Update properties of an existing repository link.

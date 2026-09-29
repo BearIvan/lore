@@ -5,6 +5,8 @@ import logging
 import os
 import re
 import shutil
+import subprocess
+from pathlib import Path
 
 import pytest
 from error_types import (
@@ -20,6 +22,7 @@ from error_types import (
     UnresolvedConflictError,
 )
 from lore_parsers import parse_commit_stats_json, parse_jsonl, parse_status_json
+from service_util import LORE_SERVICE_ENVIRONMENT, SERVICE_UNAVAILABLE
 from test_utils import unstaged_entries, working_tree_files
 from thin_client import (
     ACTION_ADD,
@@ -4911,6 +4914,92 @@ def test_link_list_staged_no_changes(new_lore_repo):
     assert "No linked repositories with staged changes" in output, (
         f"Expected no-links message, got: {output}"
     )
+
+
+@pytest.mark.smoke
+def test_link_list_staged_relays_when_the_service_is_in_use(
+    new_lore_repo, stops_background_services, global_dir_name
+):
+    """Listing staged links goes to the service when one is in use, as other
+    commands do, rather than opening the repository in the client, where it
+    waits on the lock of a service holding the repository. Shown with no
+    service reachable: the listing reports that, and so does a commit that
+    lists the links to ask for their messages or to check a `--link-message`
+    path, stopping at that listing rather than asking about no link or
+    rejecting the path."""
+    link_repo: Lore = new_lore_repo()
+    link_repo.write_commit_push("Initial link", {"link-file.txt": "link content\n"})
+
+    urc: Lore = new_lore_repo()
+    urc.write_commit_push("Initial main", {"main.txt": "main content\n"})
+    urc.link_add("linked", link_repo.get_id(), "/")
+    urc.commit("Add link")
+    with urc.open_file(os.path.join("linked", "link-file.txt"), "w+") as f:
+        f.write("updated link\n")
+    urc.stage(scan=True)
+
+    env = urc.sandboxed_env(
+        **LORE_SERVICE_ENVIRONMENT,
+        LORE_SERVICE_EXECUTABLE=str(Path(global_dir_name) / "no-such-lore-binary"),
+    )
+
+    def relayed(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [urc.lore_executable_path, "--repository", urc.path, *args],
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=urc.path,
+            stdin=subprocess.DEVNULL,
+            check=False,
+        )
+
+    listed = relayed("link", "list", "--staged")
+    assert listed.returncode == SERVICE_UNAVAILABLE, listed.stdout + listed.stderr
+
+    committed = relayed("commit", "Main message")
+    output = committed.stdout + committed.stderr
+    assert committed.returncode == SERVICE_UNAVAILABLE, output
+    assert "Linked repositories with staged changes" not in committed.stdout, output
+    assert output.count("Failed to send command to Lore service") == 1, output
+
+    messaged = relayed(
+        "commit", "Main message", "--link-message", "linked", "Linked message"
+    )
+    output = messaged.stdout + messaged.stderr
+    assert messaged.returncode == SERVICE_UNAVAILABLE, output
+    assert "does not match" not in output, output
+
+
+@pytest.mark.smoke
+def test_link_list_staged_through_the_service(new_lore_repo, background_lore_service):
+    """With the service in use, listing staged links is carried out by the
+    service, which holds the repository, rather than by a client that would
+    wait on the service's lock. An interactive commit lists them twice: to ask
+    for a message per link, and to check each `--link-message` path."""
+    link_repo: Lore = new_lore_repo()
+    link_repo.write_commit_push("Initial link", {"link-file.txt": "link content\n"})
+
+    urc: Lore = new_lore_repo(environment_vars=LORE_SERVICE_ENVIRONMENT.copy())
+    urc.write_commit_push("Initial main", {"main.txt": "main content\n"})
+    link_path = "linked"
+    urc.link_add(link_path, link_repo.get_id(), "/")
+    urc.commit("Add link")
+
+    with urc.open_file(os.path.join(link_path, "link-file.txt"), "w+") as f:
+        f.write("updated link\n")
+    urc.stage(scan=True)
+
+    output = urc.link_list(staged=True)
+    assert f"{link_path} (1 file changed)" in output, output
+
+    urc.commit("Main message")
+
+    with urc.open_file(os.path.join(link_path, "link-file.txt"), "w+") as f:
+        f.write("updated link again\n")
+    urc.stage(scan=True)
+    urc.commit("Main message", link_messages={link_path: "Link message"})
+    assert "No linked repositories with staged changes" in urc.link_list(staged=True)
 
 
 @pytest.mark.smoke

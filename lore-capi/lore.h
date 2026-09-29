@@ -4668,6 +4668,11 @@ typedef struct lore_link_list_args_t {
   int _unused;
 } lore_link_list_args_t;
 
+// Arguments for listing the links whose linked repositories hold staged changes.
+typedef struct lore_link_list_staged_args_t {
+  int _unused;
+} lore_link_list_staged_args_t;
+
 // Arguments for updating the pin or properties of an existing link.
 typedef struct lore_link_update_args_t {
   // Path within this repository of the link to update
@@ -9181,6 +9186,58 @@ int32_t lore_link_list(const struct lore_global_args_t *globals,
 void lore_link_list_async(const struct lore_global_args_t *globals,
                           const struct lore_link_list_args_t *args,
                           struct lore_event_callback_config_t callback);
+
+// List the links whose linked repositories hold staged changes, including nested links.
+//
+// # Events
+//
+// Events are delivered via the callback as `lore_event_t`. Use the `tag` field to identify the event type.
+//
+// ## Standard Events
+//
+// These events are emitted by all interface functions:
+//
+// | Tag | Data Type | Description |
+// |-----|-----------|-------------|
+// | `LORE_EVENT_LOG` | `lore_log_event_data_t` | Diagnostic messages throughout execution |
+// | `LORE_EVENT_ERROR` | `lore_error_event_data_t` | Emitted for a non-fatal error during the operation |
+// | `LORE_EVENT_COMPLETE` | `lore_complete_event_data_t` | Always emitted at the end; `status` is `0` on success or the error code on failure |
+// | `LORE_EVENT_END` | `lore_end_event_data_t` | Always emitted after `COMPLETE` to signal callback termination |
+//
+// ## Link Events
+//
+// | Tag | Data Type | Description |
+// |-----|-----------|-------------|
+// | `LORE_EVENT_LINK_STAGED_ENTRY` | `lore_link_staged_entry_event_data_t` | Emitted for each link with staged changes |
+int32_t lore_link_list_staged(const struct lore_global_args_t *globals,
+                              const struct lore_link_list_staged_args_t *args,
+                              struct lore_event_callback_config_t callback);
+
+// Asynchronous version of `lore_link_list_staged`.
+//
+// # Events
+//
+// Events are delivered via the callback as `lore_event_t`. Use the `tag` field to identify the event type.
+//
+// ## Standard Events
+//
+// These events are emitted by all interface functions:
+//
+// | Tag | Data Type | Description |
+// |-----|-----------|-------------|
+// | `LORE_EVENT_LOG` | `lore_log_event_data_t` | Diagnostic messages throughout execution |
+// | `LORE_EVENT_ERROR` | `lore_error_event_data_t` | Emitted for a non-fatal error during the operation |
+// | `LORE_EVENT_COMPLETE` | `lore_complete_event_data_t` | Always emitted at the end; `status` is `0` on success or the error code on failure |
+// | `LORE_EVENT_END` | `lore_end_event_data_t` | Always emitted after `COMPLETE` to signal callback termination |
+//
+// ## Link Events
+//
+// | Tag | Data Type | Description |
+// |-----|-----------|-------------|
+// | `LORE_EVENT_LINK_STAGED_ENTRY` | `lore_link_staged_entry_event_data_t` | Emitted for each link with staged changes |
+void lore_link_list_staged_async(const struct lore_global_args_t *globals,
+                                 const struct lore_link_list_staged_args_t *args,
+                                 struct lore_event_callback_config_t callback);
 
 // Update properties of an existing repository link.
 //

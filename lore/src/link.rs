@@ -282,15 +282,53 @@ async fn info_local(
     .await
 }
 
-/// Lists the staged links. Blocks on the runtime, so it is called from outside it.
-pub fn list_staged(globals: LoreGlobalArgs, callback: LoreEventCallback) -> i32 {
-    crate::runtime().block_on(repository_call_read(
+/// Arguments for listing the links whose linked repositories hold staged changes.
+#[repr(C)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, LoreArgs)]
+#[handler(list_staged_local)]
+pub struct LoreLinkListStagedArgs {}
+
+/// Lists the links whose linked repositories hold staged changes, including nested links.
+///
+/// # Events
+///
+/// ## Standard Events
+///
+/// These events are emitted by all interface functions:
+///
+/// | Event | Description |
+/// |-------|-------------|
+/// | [`LoreEvent::Log`](crate::interface::LoreEvent::Log) | Diagnostic messages throughout execution |
+/// | [`LoreEvent::Error`](crate::interface::LoreEvent::Error) | Emitted for a non-fatal error during the operation |
+/// | [`LoreEvent::Complete`](crate::interface::LoreEvent::Complete) | Always emitted at the end; `status` is `0` on success or the error code on failure |
+/// | [`LoreEvent::End`](crate::interface::LoreEvent::End) | Always emitted after `Complete` to signal callback termination |
+///
+/// ## Link Events
+///
+/// | Event | Description |
+/// |-------|-------------|
+/// | [`LoreEvent::LinkStagedEntry`](crate::interface::LoreEvent::LinkStagedEntry) | Emitted for each link with staged changes |
+pub async fn list_staged(
+    globals: LoreGlobalArgs,
+    args: LoreLinkListStagedArgs,
+    callback: LoreEventCallback,
+) -> i32 {
+    dispatch_call(globals, args, callback, list_staged_local).await
+}
+
+async fn list_staged_local(
+    globals: LoreGlobalArgs,
+    args: LoreLinkListStagedArgs,
+    callback: LoreEventCallback,
+) -> i32 {
+    repository_call_read(
         globals,
         callback,
-        (),
+        args,
         list_staged,
         move |repository, _args| lore_revision::link::list::list_staged(repository),
-    ))
+    )
+    .await
 }
 
 /// Arguments for updating the pin or properties of an existing link.

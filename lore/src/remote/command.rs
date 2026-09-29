@@ -73,6 +73,7 @@ pub enum LoreCommand {
     LinkRemove(crate::link::LoreLinkRemoveArgs),
     LinkInfo(crate::link::LoreLinkInfoArgs),
     LinkList(crate::link::LoreLinkListArgs),
+    LinkListStaged(crate::link::LoreLinkListStagedArgs),
     LinkUpdate(crate::link::LoreLinkUpdateArgs),
     RepositoryClone(crate::repository::LoreRepositoryCloneArgs),
     RepositoryInfo(crate::repository::LoreRepositoryInfoArgs),

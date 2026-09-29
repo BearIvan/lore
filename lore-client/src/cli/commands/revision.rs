@@ -44,6 +44,7 @@ use lore::interface::LoreRevisionSyncFileEventData;
 use lore::interface::LoreRevisionSyncRevisionEventData;
 use lore::interface::LoreString;
 use lore::interface::metadata;
+use lore::remote::command::LoreCommand;
 use lore::revision;
 use lore::revision::LoreRevisionFindArgs;
 use parking_lot::Mutex;
@@ -904,6 +905,20 @@ impl ChunkSizeHistogram {
     }
 }
 
+/// Runs a listing the per-link or per-layer commit messages are resolved against. A nonzero status
+/// is the error, so the commit stops with the listing's failure rather than acting on entries it
+/// never received.
+fn run_listing(
+    globals: &LoreGlobalArgs,
+    command: impl Into<LoreCommand>,
+    callback: LoreEventCallback,
+) -> Result<(), u8> {
+    match run_command(globals.clone(), command.into(), callback) {
+        0 => Ok(()),
+        status => Err(status as u8),
+    }
+}
+
 fn resolve_link_messages(
     globals: &LoreGlobalArgs,
     args: &RevisionCommitArgs,
@@ -942,7 +957,11 @@ fn resolve_link_messages(
                 .with_defaults(),
         );
 
-        lore::link::list_staged(globals.clone(), discovery_callback);
+        run_listing(
+            globals,
+            lore::link::LoreLinkListStagedArgs {},
+            discovery_callback,
+        )?;
 
         let links = discovered_links.lock().clone();
         if !links.is_empty() {
@@ -1017,7 +1036,11 @@ fn resolve_link_messages(
                 .with_defaults(),
         );
 
-        lore::link::list_staged(globals.clone(), validation_callback);
+        run_listing(
+            globals,
+            lore::link::LoreLinkListStagedArgs {},
+            validation_callback,
+        )?;
 
         let valid_paths = discovered_paths.lock().clone();
         for path in link_paths.iter() {
@@ -1071,11 +1094,11 @@ fn resolve_layer_messages(
                 .with_defaults(),
         );
 
-        run_command(
-            globals.clone(),
-            (lore::layer::LoreLayerListStagedArgs {}).into(),
+        run_listing(
+            globals,
+            lore::layer::LoreLayerListStagedArgs {},
             discovery_callback,
-        );
+        )?;
 
         let layers = discovered_layers.lock().clone();
         if !layers.is_empty() {
@@ -1153,11 +1176,11 @@ fn resolve_layer_messages(
                 .with_defaults(),
         );
 
-        run_command(
-            globals.clone(),
-            (lore::layer::LoreLayerListArgs {}).into(),
+        run_listing(
+            globals,
+            lore::layer::LoreLayerListArgs {},
             validation_callback,
-        );
+        )?;
 
         let valid_paths = configured_layers.lock().clone();
         for path in layer_paths.iter() {
