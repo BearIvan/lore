@@ -25,9 +25,11 @@ mod tests {
     use std::time::Duration;
     use std::time::Instant;
 
+    use lore::interface::LoreArray;
     use lore::interface::LoreEvent;
     use lore::interface::LoreEventCallback;
     use lore::interface::LoreString;
+    use lore::revision::LoreRevisionCherryPickArgs;
     use lore::service::LoreServiceSetExecutableArgs;
     use lore::service::LoreServiceSetUseAutomaticallyArgs;
     use lore::service::LoreServiceStartArgs;
@@ -355,6 +357,40 @@ mod tests {
             unavailable_code(),
             "an unreachable service must report as one, not as the call having \
              run and failed"
+        );
+    }
+
+    /// `lore_revision_cherry_pick` decides at the entry whether to relay, so with
+    /// relaying on it goes to the service rather than cherry-picking here.
+    ///
+    /// No service can be reached, and the directory named holds no repository, so
+    /// a call that ran here would fail differently.
+    #[test]
+    #[serial]
+    fn the_cherry_pick_entry_point_relays_to_the_service() {
+        let settings = machine_settings("service-api-cherry-pick-");
+        let missing = settings.path().join("no-such-lore");
+        lore::runtime().block_on(async {
+            assert_eq!(set_use_automatically(true).await, 0);
+            assert_eq!(set_executable(&missing.to_string_lossy()).await, 0);
+        });
+
+        let globals = LoreGlobalArgs {
+            repository_path: settings.path().display().to_string().into(),
+            offline: 1,
+            ..LoreGlobalArgs::default()
+        };
+        let args = LoreRevisionCherryPickArgs {
+            revision: LoreString::from("main@1"),
+            message: LoreString::default(),
+            no_commit: 0,
+            inherit_metadata: LoreArray::default(),
+        };
+
+        assert_eq!(
+            lore::interface::lore_revision_cherry_pick(&globals, &args, no_callback()),
+            unavailable_code(),
+            "the entry point must relay the call rather than run it here"
         );
     }
 

@@ -502,6 +502,52 @@ async fn revision_tree_metadata_set_batch_survives_the_wire() {
     }
 }
 
+/// A cherry-pick routed through a service carries the metadata keys the revision it creates
+/// inherits: an array of text, and the last field of the struct.
+#[tokio::test]
+async fn revision_cherry_pick_args_survive_the_wire() {
+    use lore::revision::LoreRevisionCherryPickArgs;
+
+    let args = LoreRevisionCherryPickArgs {
+        revision: LoreString::from_str("main@7"),
+        message: LoreString::from_str("pick"),
+        no_commit: 1,
+        inherit_metadata: LoreArray::from_vec(vec![LoreString::from_str("change-request")]),
+    };
+
+    for (serialization, label) in [
+        (SerializationType::Json, "json"),
+        (SerializationType::Bincode, "bincode"),
+    ] {
+        let message = MessageToServer {
+            globals: LoreGlobalArgs::default(),
+            command: LoreCommand::RevisionCherryPick(args.clone()),
+        };
+        let message_bytes = write_v1_message(message, serialization).unwrap();
+        let processed: Result<Option<(V1Header, MessageToServer)>, MessageError> =
+            blocking_read_v1_message(&mut message_bytes.as_slice());
+        let processed = processed
+            .unwrap_or_else(|error| panic!("{label} must read back: {error:?}"))
+            .expect("a whole message must be present");
+
+        match processed.1.command {
+            LoreCommand::RevisionCherryPick(read_back) => {
+                assert_eq!(
+                    (read_back.revision, read_back.message, read_back.no_commit),
+                    (args.revision.clone(), args.message.clone(), args.no_commit),
+                    "{label}"
+                );
+                assert_eq!(
+                    read_back.inherit_metadata.as_slice(),
+                    args.inherit_metadata.as_slice(),
+                    "{label} must carry the inherited keys unchanged"
+                );
+            }
+            other => panic!("Unexpected command: {other:?}"),
+        }
+    }
+}
+
 /// A sync routed through a service carries its view filter file over the wire.
 ///
 /// `view` names the file the working tree is left materialized under, and a sync that reached the

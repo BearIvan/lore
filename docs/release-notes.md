@@ -16,6 +16,7 @@ Release notes for the open source Lore project. Releases before v0.8.4 predate t
 
 ### Features
 
+- C API: `lore_revision_cherry_pick` and `lore_revision_cherry_pick_async` cherry-pick a revision onto the current branch, as `lore revision cherry-pick` does
 - C API: `lore_branch_latest_list` and `lore_branch_latest_list_async` list the revisions a branch LATEST has held, most recent first, and relay to the Lore service when one is in use. `lore branch latest list` takes the same path, so with the service in use it no longer waits indefinitely on the local store the service holds
 - `lore sync --view <file>` changes the view filter an instance materializes its working files under, carrying the working tree to what the new view holds rather than re-cloning
 - `lore-server`: the disk space available to the local stores is checked on a timer and a warning is logged once it falls below a threshold. `[server.local_store_monitor]` carries `check_interval_seconds` (default 30) and `low_space_threshold_bytes` (default 10 GiB); an interval of 0 turns the check off. Every local store the server writes at is watched, the immutable store and the mutable store among them, and the reading is taken per volume: stores sharing a filesystem draw one warning naming them all, rather than one warning each. A server whose stores are not local is not checked

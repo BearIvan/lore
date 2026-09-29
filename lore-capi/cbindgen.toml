@@ -191,6 +191,7 @@ include = [
 "LoreCherryPickUnresolveRevisionEventData" = "lore_cherry_pick_unresolve_revision_event_data_t"
 "LoreCherryPickResolveFileEventData" = "lore_cherry_pick_resolve_file_event_data_t"
 "LoreCherryPickResolveRevisionEventData" = "lore_cherry_pick_resolve_revision_event_data_t"
+"LoreRevisionCherryPickArgs" = "lore_revision_cherry_pick_args_t"
 "LoreRevertStartBeginEventData" = "lore_revert_start_begin_event_data_t"
 "LoreRevertStartEndEventData" = "lore_revert_start_end_event_data_t"
 "LoreRevertAbortBeginEventData" = "lore_revert_abort_begin_event_data_t"
