@@ -604,6 +604,27 @@ async fn commit_with_metadata_in_operation(
         .await;
     }
 
+    commit_staged_with_layers(
+        operation, repository, token, options, keys, values, formats, &reporting,
+    )
+    .await
+}
+
+/// Commits the staged revision, then each layer staged beside it.
+///
+/// Its own future: inline, what it holds across its awaits would be reserved in the states of
+/// [`commit_with_metadata_in_operation`] that commit a link or a layer alone.
+#[allow(clippy::too_many_arguments)]
+async fn commit_staged_with_layers(
+    operation: &Arc<InstanceOperationImpl>,
+    repository: Arc<RepositoryContext>,
+    token: &RepositoryWriteToken,
+    options: CommitOptions,
+    keys: LoreArray<LoreString>,
+    values: LoreArray<LoreString>,
+    formats: LoreArray<LoreMetadataType>,
+    reporting: &CommitReporting,
+) -> Result<Hash, CommitError> {
     let context = execution_context();
     let globals = context.globals();
     let dry_run = globals.dry_run();

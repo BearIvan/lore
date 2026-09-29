@@ -386,7 +386,7 @@ pub(crate) async fn stage_filesystem_path(
         remainder_path.as_str(),
     );
 
-    let (mut remainder_path, resolved_info) = if remainder_path.is_empty() {
+    let (remainder_path, resolved_info) = if remainder_path.is_empty() {
         (remainder_path, None)
     } else {
         let resolved = util::fs::filesystem_path_and_info(
@@ -439,170 +439,39 @@ pub(crate) async fn stage_filesystem_path(
             )));
         }
 
-        // iterate the subpaths, do file system real name fetching and stage each node sequentially
-        // to do case mismatch resolution. This way the stage_node_from_metadata function does not have to look
-        // in the file system for the current existing name case variation but just use what was
-        // passed to the function as the stage_directory will enumerate the file system.
-        let mut current_repository = repository.clone();
-        let mut current_relative_path =
-            base.path.to_buf_with_capacity(RelativePath::COMPONENT_ROOM);
-        let repository_root = repository.require_path()?;
-        let mut current_absolute_path = if base.path.is_empty() {
-            repository_root.to_path_buf()
-        } else {
-            base.path.to_absolute_path(repository_root)
-        };
-        let mut current_node = base.node;
-        let mut current_state = state.clone();
-        // The descent below builds the path a component at a time, so the
-        // verdict is folded once for the base and stepped from there.
-        let mut current_states = repository.filter.exclusion_states(&current_relative_path);
-
-        while !remainder_path.is_empty() {
-            // The final component is the staged path, whose metadata is read above.
-            let is_final_component = remainder_path.parent().is_none();
-            let current_name = remainder_path.pop_root();
-            if current_name == "." {
-                continue;
-            }
-
-            let current_info = if is_final_component {
-                info
-            } else {
-                FileInfo::Directory
-            };
-
-            // A named path is refused rather than skipped: the caller asked for
-            // this path specifically, and staging it into the parent would take
-            // content the nested repository owns.
-            if current_info.is_dir() {
-                let held = current_state
-                    .find_subnode(
-                        current_repository.clone(),
-                        current_node,
-                        hash::hash_string(current_name),
-                    )
-                    .await
-                    .ok()
-                    .filter(|node| node.is_valid_node_id());
-                if is_uncommitted_child(&current_repository, &current_state, held).await?
-                    && state::is_nested_repository_root(&mut current_absolute_path, current_name)
-                        .await
-                {
-                    return Err(StageError::internal(format!(
-                        "Failed to stage path {}, path is a nested repository",
-                        current_absolute_path.join(current_name).display()
-                    )));
-                }
-            }
-
-            let staged = stage_node_from_metadata(
+        let mut descent = StageDescent::at(&base)?;
+        if let Some(node_link) = descent
+            .descend(
                 &operation,
-                NodeMapping {
-                    repository: current_repository.clone(),
-                    state: current_state.clone(),
-                    path: current_relative_path.clone().freeze(),
-                    node: current_node,
-                },
-                current_name.to_string(),
-                current_info,
+                remainder_path,
+                info,
                 options,
-                stats.clone(),
-                link_tracker.clone(),
-                KnownChild::Unresolved,
-                current_states,
+                &stats,
+                link_tracker.as_ref(),
             )
-            .await?;
-            let node_link = staged.link;
-
-            if !node_link.is_valid() {
-                return Ok(node_link);
-            }
-
-            // Scoped so the node_name_ref read lock drops before node() below; a
-            // second shared lock on the same block deadlocks behind a queued writer.
-            {
-                let final_name = current_state
-                    .node_name_ref(current_repository.clone(), node_link.node)
-                    .await
-                    .forward::<StageError>("Failed to resolve node name")?;
-                current_absolute_path.push(&*final_name);
-                current_relative_path.push(&final_name);
-            }
-
-            current_states = staged.states;
-
-            let node = current_state
-                .node(current_repository.clone(), node_link.node)
-                .await
-                .forward::<StageError>(
-                    "Node not found in child node list, inconsistent repository state",
-                )?;
-
-            current_node = node_link.node;
-
-            // Transition into the link
-            if node.is_link() {
-                let link_repository_id: RepositoryId = node.address.context.into();
-                let link_revision = node.address.hash;
-                let linked_node = node.child;
-
-                lore_debug!(
-                    "Transition into link with ID {link_repository_id} at revision {link_revision}"
-                );
-
-                let linked_repository =
-                    current_repository.to_link_context(link_repository_id).await;
-                let mut linked_state =
-                    State::deserialize(current_repository.clone(), link_revision)
-                        .await
-                        .forward::<StageError>("Failed to deserialize revision state")?;
-
-                // Track this link for potential reserialization
-                if let Some(ref tracker) = link_tracker {
-                    // Reuse potentially existing link state for same repository
-                    linked_state = if let Some(existing_context) =
-                        tracker.find_link_context(link_repository_id)
-                    {
-                        existing_context.link_state.clone()
-                    } else {
-                        linked_state.clone()
-                    };
-
-                    let link_context = link::LinkContext {
-                        link_repository_id,
-                        link_node_id: node_link.node,
-                        parent_repository_id: current_repository.id,
-                        link_state: linked_state.clone(),
-                    };
-
-                    tracker.add_link(link_context);
-                }
-
-                current_repository = linked_repository;
-                current_state = linked_state;
-                current_node = linked_node;
-            }
+            .await?
+        {
+            return Ok(node_link);
         }
 
         // Finally, if the given path is a directory we should recurse and stage everything below it
-        if !options.no_children && (current_node == ROOT_NODE || info.is_dir()) {
+        if !options.no_children && (descent.node == ROOT_NODE || info.is_dir()) {
             stats.task_count.fetch_add(1, Ordering::Release);
 
             let result = stage_directory(
                 operation.clone(),
-                current_repository.clone(),
-                current_state.clone(),
-                current_absolute_path.as_path(),
-                current_relative_path,
-                current_node,
+                descent.repository.clone(),
+                descent.state.clone(),
+                descent.absolute_path.as_path(),
+                descent.relative_path,
+                descent.node,
                 1,
                 options,
                 stats.clone(),
                 link_tracker.clone(),
                 layer_mask.clone(),
                 discards.clone(),
-                current_states,
+                descent.states,
             )
             .await;
             stats.task_count.fetch_sub(1, Ordering::Release);
@@ -610,9 +479,9 @@ pub(crate) async fn stage_filesystem_path(
         }
 
         return Ok(NodeLink {
-            node: current_node,
-            repository: current_repository.id,
-            revision: current_state.revision(),
+            node: descent.node,
+            repository: descent.repository.id,
+            revision: descent.state.revision(),
         });
     }
 
@@ -682,6 +551,190 @@ pub(crate) async fn stage_filesystem_path(
     }
 
     Ok(NodeLink::default())
+}
+
+/// The node a staged path's descent has reached, in the repository and state holding it past
+/// any link crossed, with the paths and the filter verdict naming it.
+struct StageDescent {
+    repository: Arc<RepositoryContext>,
+    state: Arc<State>,
+    node: NodeID,
+    relative_path: RelativePathBuf,
+    absolute_path: PathBuf,
+    states: FilterStates,
+}
+
+impl StageDescent {
+    /// A descent standing at `base`, with the filter verdict folded once for its path, which the
+    /// descent steps a component at a time from there.
+    ///
+    /// Not part of [`stage_filesystem_path`]: the path it borrows to fold the verdict would be
+    /// reserved there across the directory walk.
+    fn at(base: &NodeMapping) -> Result<Self, StageError> {
+        let relative_path = base.path.to_buf_with_capacity(RelativePath::COMPONENT_ROOM);
+        let repository_root = base.repository.require_path()?;
+        Ok(Self {
+            repository: base.repository.clone(),
+            state: base.state.clone(),
+            node: base.node,
+            absolute_path: if base.path.is_empty() {
+                repository_root.to_path_buf()
+            } else {
+                base.path.to_absolute_path(repository_root)
+            },
+            states: base.repository.filter.exclusion_states(&relative_path),
+            relative_path,
+        })
+    }
+
+    /// Stage each component of `remainder_path` in turn and step into the node it names, and
+    /// into the linked state where that node is a link.
+    ///
+    /// Each component is staged under the name `remainder_path` spells it with, which the caller
+    /// resolves against the file system, so `stage_node_from_metadata` does not look up its case
+    /// again. The final component is the staged path, staged as `info`; every other one is staged
+    /// as a directory. `Some` is the link of a component that was not staged, which ends the
+    /// descent.
+    ///
+    /// Its own future: inline, what a step holds across its awaits would be reserved in the
+    /// directory walk's state of [`stage_filesystem_path`].
+    async fn descend(
+        &mut self,
+        operation: &Arc<InstanceOperationImpl>,
+        mut remainder_path: RelativePath,
+        info: FileInfo,
+        options: StageOptions,
+        stats: &Arc<StageStats>,
+        link_tracker: Option<&Arc<crate::link::LinkTracker>>,
+    ) -> Result<Option<NodeLink>, StageError> {
+        while !remainder_path.is_empty() {
+            let is_final_component = remainder_path.parent().is_none();
+            let current_name = remainder_path.pop_root();
+            if current_name == "." {
+                continue;
+            }
+
+            let current_info = if is_final_component {
+                info
+            } else {
+                FileInfo::Directory
+            };
+
+            // A named path is refused rather than skipped: the caller asked for
+            // this path specifically, and staging it into the parent would take
+            // content the nested repository owns.
+            if current_info.is_dir() {
+                let held = self
+                    .state
+                    .find_subnode(
+                        self.repository.clone(),
+                        self.node,
+                        hash::hash_string(current_name),
+                    )
+                    .await
+                    .ok()
+                    .filter(|node| node.is_valid_node_id());
+                if is_uncommitted_child(&self.repository, &self.state, held).await?
+                    && state::is_nested_repository_root(&mut self.absolute_path, current_name).await
+                {
+                    return Err(StageError::internal(format!(
+                        "Failed to stage path {}, path is a nested repository",
+                        self.absolute_path.join(current_name).display()
+                    )));
+                }
+            }
+
+            let staged = stage_node_from_metadata(
+                operation,
+                NodeMapping {
+                    repository: self.repository.clone(),
+                    state: self.state.clone(),
+                    path: self.relative_path.clone().freeze(),
+                    node: self.node,
+                },
+                current_name.to_string(),
+                current_info,
+                options,
+                stats.clone(),
+                link_tracker.cloned(),
+                KnownChild::Unresolved,
+                self.states,
+            )
+            .await?;
+            let node_link = staged.link;
+
+            if !node_link.is_valid() {
+                return Ok(Some(node_link));
+            }
+
+            // Scoped so the node_name_ref read lock drops before node() below; a
+            // second shared lock on the same block deadlocks behind a queued writer.
+            {
+                let final_name = self
+                    .state
+                    .node_name_ref(self.repository.clone(), node_link.node)
+                    .await
+                    .forward::<StageError>("Failed to resolve node name")?;
+                self.absolute_path.push(&*final_name);
+                self.relative_path.push(&final_name);
+            }
+
+            self.states = staged.states;
+
+            let node = self
+                .state
+                .node(self.repository.clone(), node_link.node)
+                .await
+                .forward::<StageError>(
+                    "Node not found in child node list, inconsistent repository state",
+                )?;
+
+            self.node = node_link.node;
+
+            // Transition into the link
+            if node.is_link() {
+                let link_repository_id: RepositoryId = node.address.context.into();
+                let link_revision = node.address.hash;
+                let linked_node = node.child;
+
+                lore_debug!(
+                    "Transition into link with ID {link_repository_id} at revision {link_revision}"
+                );
+
+                let linked_repository = self.repository.to_link_context(link_repository_id).await;
+                let mut linked_state = State::deserialize(self.repository.clone(), link_revision)
+                    .await
+                    .forward::<StageError>("Failed to deserialize revision state")?;
+
+                // Track this link for potential reserialization
+                if let Some(tracker) = link_tracker {
+                    // Reuse potentially existing link state for same repository
+                    linked_state = if let Some(existing_context) =
+                        tracker.find_link_context(link_repository_id)
+                    {
+                        existing_context.link_state.clone()
+                    } else {
+                        linked_state.clone()
+                    };
+
+                    let link_context = link::LinkContext {
+                        link_repository_id,
+                        link_node_id: node_link.node,
+                        parent_repository_id: self.repository.id,
+                        link_state: linked_state.clone(),
+                    };
+
+                    tracker.add_link(link_context);
+                }
+
+                self.repository = linked_repository;
+                self.state = linked_state;
+                self.node = linked_node;
+            }
+        }
+
+        Ok(None)
+    }
 }
 
 pub(crate) async fn stage_single_node(

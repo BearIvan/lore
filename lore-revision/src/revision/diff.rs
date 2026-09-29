@@ -186,6 +186,15 @@ pub(crate) async fn diff(
         .send();
     }
 
+    send_file_changes(diff).await
+}
+
+/// Sends a `RevisionDiffFile` event for each change, reading from each side's node whether it is
+/// a file.
+///
+/// Its own future: inline, the change it holds across the node reads would be reserved in every
+/// state of [`diff()`], the link pin diff among them.
+async fn send_file_changes(diff: Vec<NodeChange>) -> Result<(), DiffError> {
     for change in diff {
         let mut old_is_file = false;
         if change.from.mapping.node != INVALID_NODE {
@@ -239,7 +248,11 @@ pub fn diff_boxed(
 mod tests {
     use std::str::FromStr;
 
+    use lore_base::runtime::LORE_CONTEXT;
+
     use super::*;
+    use crate::fs::filesystem_provider::tests::setup_test_execution;
+    use crate::fs::filesystem_provider::tests::test_store_create;
 
     fn paths(values: &[&str]) -> Vec<RelativePath> {
         values
@@ -297,5 +310,33 @@ mod tests {
             "libs/shared",
             Some(&paths(&["docs", "libs"]))
         ));
+    }
+
+    /// The changes are sent after the link pins are diffed, so the diff holds no change beside
+    /// the link pin diff.
+    #[tokio::test]
+    async fn the_link_pin_diff_is_held_without_a_change() {
+        LORE_CONTEXT
+            .scope(setup_test_execution(), async {
+                let (immutable_store, mutable_store, _execution) =
+                    test_store_create().await.expect("Failed to create stores");
+                let repository = Arc::new(RepositoryContext::new_null_context(
+                    immutable_store,
+                    mutable_store,
+                ));
+                let state = State::new();
+
+                let revision_diff =
+                    diff(repository.clone(), Hash::default(), Hash::default(), None);
+                let pin_diff = link::diff_link_pins(repository, &state, &state);
+
+                assert!(
+                    size_of_val(&revision_diff) < size_of_val(&pin_diff) + size_of::<NodeChange>(),
+                    "the diff holds {} bytes, the link pin diff {}",
+                    size_of_val(&revision_diff),
+                    size_of_val(&pin_diff)
+                );
+            })
+            .await;
     }
 }
