@@ -86,7 +86,9 @@ pub async fn read_raw(
     }
 }
 
-pub async fn decompress_and_verify(
+/// Expands `buffer` when `options.decompress` is set and hashes its content against `address` when
+/// `options.verify` is set, returning the fragment and payload expanded only if asked.
+pub fn decompress_and_verify(
     fragment: Fragment,
     buffer: Bytes,
     address: Address,
@@ -246,7 +248,7 @@ pub async fn load_fragment(
         // Decompress + verify local data
         match local_result {
             Ok((fragment, buffer)) => {
-                match decompress_and_verify(fragment, buffer, address, options).await {
+                match decompress_and_verify(fragment, buffer, address, options) {
                     Ok((fragment, buffer)) => Ok((fragment, buffer)),
                     Err(err) if matches!(err, StorageError::NotSupported(_)) => return Err(err),
                     Err(err) => {
@@ -305,7 +307,7 @@ pub async fn load_fragment(
         let store_fragment = fragment;
         let payload = buffer.clone();
 
-        match decompress_and_verify(fragment, buffer, address, options).await {
+        match decompress_and_verify(fragment, buffer, address, options) {
             Ok((fragment, buffer)) => {
                 // Cache the fragment locally. Skip the put entirely when
                 // caching is disabled and data is not corrupt and has no
@@ -472,7 +474,17 @@ pub async fn read(
     }
 }
 
-/// Read content into a pre-allocated buffer with offset/length.
+/// Read content into a pre-allocated buffer with offset/length, verifying it when `options.verify`
+/// is set.
+///
+/// A whole read of one compressed fragment the local store holds expands into `slice` and is
+/// verified there, allocating nothing of the content's size; any other payload the local store
+/// holds is expanded and verified once before its range is copied in. A payload the local store
+/// cannot read is fetched from the remote through [`load_fragment`], and one that fails to expand
+/// or verify is loaded through it again, which replaces the local copy from the remote. That load
+/// is boxed, as only a cache miss or a corrupt payload takes it.
+///
+/// The contents of `slice` are unspecified when this fails.
 pub async fn read_into(
     store: Arc<dyn ImmutableStore>,
     partition: Partition,
@@ -482,15 +494,52 @@ pub async fn read_into(
     options: ReadOptions,
     remote_session: Option<Arc<StorageSession>>,
 ) -> Result<(), StorageError> {
-    let load_raw_options = options;
-    let (fragment, buffer) = load_fragment(
-        store.clone(),
-        partition,
-        address,
-        load_raw_options.no_decompress(),
-        remote_session.clone(),
-    )
-    .await?;
+    let (fragment, buffer) = {
+        let stored = if options.local && !address.hash.is_zero() {
+            crate::write::wait_if_in_flight(partition, address).await;
+            read_raw(store.clone(), partition, address, options.verify)
+                .await
+                .ok()
+        } else {
+            None
+        };
+
+        if let Some((fragment, buffer)) = &stored
+            && slice.len() as u64 == fragment.size_content
+            && resolve_content_range(range.clone(), fragment.size_content).len() == slice.len()
+            && options
+                .max_content_size
+                .is_none_or(|max| fragment.size_content <= max)
+            && (fragment.flags & FragmentFlags::PayloadFragmented)
+                != FragmentFlags::PayloadFragmented
+            && (fragment.flags & FragmentFlags::PayloadCompressed) != 0
+            && compress::decompress_into_slice(*fragment, buffer, slice).is_ok()
+            && (!options.verify || hash::hash_slice(slice) == address.hash)
+        {
+            return Ok(());
+        }
+
+        match stored.map(|(fragment, buffer)| {
+            decompress_and_verify(fragment, buffer, address, options.with_decompress())
+        }) {
+            Some(Ok(content)) => content,
+            loaded => {
+                let options = if loaded.is_some() {
+                    options.with_decompress()
+                } else {
+                    options.with_decompress().no_local()
+                };
+                Box::pin(load_fragment(
+                    store.clone(),
+                    partition,
+                    address,
+                    options,
+                    remote_session.clone(),
+                ))
+                .await?
+            }
+        }
+    };
 
     if let Some(max) = options.max_content_size
         && fragment.size_content > max
@@ -530,7 +579,7 @@ pub async fn read_into(
             fragment,
             buffer,
             target,
-            options,
+            options.with_decompress(),
             0,
             remote_session,
         )
@@ -551,18 +600,6 @@ pub async fn read_into(
             )));
         }
         slice.copy_from_slice(content.as_ref());
-    } else if fragment.flags & FragmentFlags::PayloadCompressed != 0 {
-        let (_, decompressed) = compress::decompress(fragment, buffer.as_ref())
-            .map_err(|e| StorageError::internal_with_context(e, "decompress failed"))?;
-        let decompressed = decompressed.freeze().slice(range);
-        if slice.len() != decompressed.len() {
-            return Err(StorageError::internal(format!(
-                "unexpected size: slice {} vs decompressed {}",
-                slice.len(),
-                decompressed.len()
-            )));
-        }
-        slice.copy_from_slice(decompressed.as_ref());
     } else {
         let buffer = buffer.slice(range);
         if slice.len() != buffer.len() {
@@ -790,7 +827,7 @@ pub(crate) async fn read_content_into_buffer(
 
     // Verified and expanded, the list is the root the walk starts from, so the walk never reads it
     // again.
-    let (root, list) = match decompress_and_verify(fragment, payload, address, options).await {
+    let (root, list) = match decompress_and_verify(fragment, payload, address, options) {
         Ok(result) => result,
         Err(err) => {
             lore_base::lore_debug!(
@@ -1464,7 +1501,7 @@ async fn resolve_root(
         let store_fragment = fragment;
         let raw_payload = buffer.clone();
 
-        match decompress_and_verify(fragment, buffer, address, options).await {
+        match decompress_and_verify(fragment, buffer, address, options) {
             Ok((fragment, buffer)) => {
                 let should_store = options.cache
                     || (fragment.flags & FragmentFlags::PayloadLocalCachePriority) != 0;
@@ -2332,6 +2369,204 @@ mod tests {
             0,
             "the compressed payload was fetched a second time to expand it"
         );
+    }
+
+    /// Read `address` whole through [`read_into`] into a slice of `size` bytes, reporting the slice
+    /// and how many times the store was asked for the payload.
+    async fn read_into_counted(
+        store: Arc<dyn ImmutableStore>,
+        partition: Partition,
+        address: Address,
+        size: usize,
+        options: ReadOptions,
+    ) -> (Result<Vec<u8>, StorageError>, usize) {
+        let (counting, counts) = CountingReadStore::wrap(store);
+        let mut slice = vec![0u8; size];
+        let result = read_into(
+            counting, partition, address, None, &mut slice, options, None,
+        )
+        .await
+        .map(|()| slice);
+        (result, counts.gets())
+    }
+
+    /// A verified whole read of a compressed fragment delivers its content from one load.
+    #[tokio::test]
+    async fn a_whole_compressed_read_into_a_slice_loads_its_payload_once() {
+        let (_dir, store) = make_test_store().await;
+        let partition = Partition::from([0x91; 16]);
+        let (address, content) =
+            put_compressed(&store, partition, Context::from([0x91; 16]), 4096).await;
+
+        let (slice, gets) = read_into_counted(
+            store,
+            partition,
+            address,
+            content.len(),
+            ReadOptions::default().no_remote(),
+        )
+        .await;
+
+        assert_eq!(slice.expect("read compressed content"), content);
+        assert_eq!(gets, 1, "the payload was loaded more than once");
+    }
+
+    /// An unverified whole read of a compressed fragment delivers its content from one load.
+    #[tokio::test]
+    async fn an_unverified_whole_compressed_read_into_a_slice_loads_its_payload_once() {
+        let (_dir, store) = make_test_store().await;
+        let partition = Partition::from([0x92; 16]);
+        let (address, content) =
+            put_compressed(&store, partition, Context::from([0x92; 16]), 4096).await;
+
+        let (slice, gets) = read_into_counted(
+            store,
+            partition,
+            address,
+            content.len(),
+            ReadOptions::default().no_remote().no_verify(),
+        )
+        .await;
+
+        assert_eq!(slice.expect("read compressed content"), content);
+        assert_eq!(gets, 1, "the payload was loaded more than once");
+    }
+
+    /// A read into a slice of content spread across fragments assembles it from the verified list.
+    #[tokio::test]
+    async fn a_fragmented_read_into_a_slice_assembles_the_content() {
+        let (_dir, store) = make_test_store().await;
+        let partition = Partition::from([0x93; 16]);
+        let (address, content) =
+            put_two_leaf_list(&store, partition, Context::from([0x93; 16])).await;
+
+        let (slice, _) = read_into_counted(
+            store,
+            partition,
+            address,
+            content.len(),
+            ReadOptions::default().no_remote(),
+        )
+        .await;
+
+        assert_eq!(slice.expect("read fragmented content"), content);
+    }
+
+    /// A payload the local store does not hold is looked for through the load that falls back to
+    /// the remote, and with no remote it is reported missing.
+    #[tokio::test]
+    async fn a_payload_the_local_store_lacks_is_reported_missing() {
+        let (_dir, store) = make_test_store().await;
+        let partition = Partition::from([0x94; 16]);
+        let address = Address {
+            hash: hash::hash_slice(b"never stored"),
+            context: Context::from([0x94; 16]),
+        };
+
+        let (slice, gets) =
+            read_into_counted(store, partition, address, 16, ReadOptions::default()).await;
+
+        assert!(
+            matches!(slice, Err(StorageError::AddressNotFound(_))),
+            "a payload no store holds was not reported missing"
+        );
+        assert_eq!(
+            gets, 1,
+            "the local store was asked again for a payload it lacks"
+        );
+    }
+
+    /// A range of a compressed fragment is delivered into a slice of the range's size.
+    #[tokio::test]
+    async fn a_ranged_compressed_read_into_a_slice_delivers_the_range() {
+        let (_dir, store) = make_test_store().await;
+        let partition = Partition::from([0x96; 16]);
+        let (address, content) =
+            put_compressed(&store, partition, Context::from([0x96; 16]), 4096).await;
+
+        let mut slice = vec![0u8; 100];
+        read_into(
+            store,
+            partition,
+            address,
+            Some(1000..1100),
+            &mut slice,
+            ReadOptions::default().no_remote(),
+            None,
+        )
+        .await
+        .expect("read a range of compressed content");
+
+        assert_eq!(slice, content[1000..1100]);
+    }
+
+    /// A range covering the whole of a compressed fragment is read as the whole content.
+    #[tokio::test]
+    async fn a_range_covering_compressed_content_reads_it_whole() {
+        let (_dir, store) = make_test_store().await;
+        let partition = Partition::from([0x98; 16]);
+        let (address, content) =
+            put_compressed(&store, partition, Context::from([0x98; 16]), 4096).await;
+
+        let mut slice = vec![0u8; content.len()];
+        read_into(
+            store,
+            partition,
+            address,
+            Some(0..content.len() + 8),
+            &mut slice,
+            ReadOptions::default().no_remote(),
+            None,
+        )
+        .await
+        .expect("read compressed content through a covering range");
+
+        assert_eq!(slice, content);
+    }
+
+    /// A slice the content does not fill is refused rather than reported filled.
+    #[tokio::test]
+    async fn a_slice_longer_than_compressed_content_is_refused() {
+        let (_dir, store) = make_test_store().await;
+        let partition = Partition::from([0x97; 16]);
+        let (address, content) =
+            put_compressed(&store, partition, Context::from([0x97; 16]), 4096).await;
+
+        let (slice, _) = read_into_counted(
+            store,
+            partition,
+            address,
+            content.len() + 8,
+            ReadOptions::default().no_remote(),
+        )
+        .await;
+
+        assert!(
+            slice.is_err(),
+            "a slice longer than its content was reported filled"
+        );
+    }
+
+    /// The zero hash names empty content, which leaves the slice untouched without a store lookup.
+    #[tokio::test]
+    async fn a_read_of_the_zero_hash_into_a_slice_leaves_it_untouched() {
+        let (_dir, store) = make_test_store().await;
+        let address = Address {
+            hash: Hash::default(),
+            context: Context::from([0x95; 16]),
+        };
+
+        let (slice, gets) = read_into_counted(
+            store,
+            Partition::from([0x95; 16]),
+            address,
+            8,
+            ReadOptions::default().no_remote(),
+        )
+        .await;
+
+        assert_eq!(slice.expect("read the zero hash"), vec![0u8; 8]);
+        assert_eq!(gets, 0, "the store was asked for the zero hash");
     }
 
     /// The list the walk starts from is the one the lookup read, and each leaf is read into its own

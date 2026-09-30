@@ -538,7 +538,6 @@ mod tests {
                 ..Default::default()
             },
         )
-        .await
         .expect("the stored bytes decode to the content the address names");
         content
     }
