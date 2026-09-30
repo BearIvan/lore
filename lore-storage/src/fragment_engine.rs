@@ -27,6 +27,7 @@ use crate::types::Fragment;
 use crate::types::FragmentReference;
 use crate::types::Partition;
 use crate::write::FusedPublish;
+use crate::write::Payload;
 use crate::write::StoreResult;
 use crate::write::store_fragment;
 use crate::write::store_fragment_publishing;
@@ -124,7 +125,7 @@ pub async fn write_fragmented(
                 partition,
                 Address { context, hash },
                 fragment,
-                chunk_buffer,
+                Payload::Shared(chunk_buffer),
                 flags.local_cache_priority,
                 remote_session,
                 writes,
@@ -507,7 +508,7 @@ async fn write_fragmentlist_impl(
                 partition,
                 Address { context, hash },
                 fragment,
-                buffer,
+                Payload::Shared(buffer),
                 true, /* Fragment lists have local priority */
                 remote_session,
                 writes,

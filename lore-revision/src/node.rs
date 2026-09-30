@@ -6,7 +6,6 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
 use bitflags::bitflags;
-use bytes::Bytes;
 use lore_base::allocator::HeapBox;
 use lore_base::allocator::HeapBuf;
 use lore_base::allocator::node_block_allocator;
@@ -1146,6 +1145,11 @@ impl NodeBlockOwnedReader {
     pub fn node_block(&self) -> &NodeBlockData {
         &self.lock.data
     }
+
+    /// The name table exactly as it is to be stored.
+    pub fn name_table(&self) -> &[u8] {
+        &self.lock.name
+    }
 }
 
 #[error_set]
@@ -1601,10 +1605,6 @@ impl NodeBlockReader<'_> {
     pub fn node(&self, node_index: usize) -> &Node {
         debug_assert!(node_index < BLOCK_NODE_COUNT);
         &self.lock.data.node[node_index]
-    }
-
-    pub fn clone_name_table(&self) -> Bytes {
-        Bytes::copy_from_slice(&self.lock.name)
     }
 
     /// Access the full node block

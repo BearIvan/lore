@@ -181,6 +181,7 @@ pub use write::store_fragment;
 pub use write::store_raw_local;
 pub use write::stored_in_flight;
 pub use write::write_content;
+pub use write::write_content_borrowed;
 pub use write::write_from_file;
 pub use write::write_raw;
 pub use write::write_resolved;

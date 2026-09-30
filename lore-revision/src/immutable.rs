@@ -5,8 +5,8 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
-use async_trait::async_trait;
 use bytes::Bytes;
+use futures::FutureExt;
 use lore_base::lore_spawn;
 use lore_error_set::prelude::*;
 use lore_transport::ProtocolError;
@@ -27,7 +27,6 @@ use crate::lore::Hash;
 use crate::lore::Partition;
 use crate::lore::TypedBytes;
 use crate::lore::VecBytes;
-use crate::lore::extend_lifetime;
 use crate::lore_debug;
 use crate::lore_trace;
 use crate::repository::RepositoryContext;
@@ -437,6 +436,38 @@ pub fn write(
     flags: WriteOptions,
 ) -> impl Future<Output = Result<Address, ImmutableError>> {
     write_with_tracker(repository, context, buffer, flags, None)
+}
+
+/// [`write`] for content the caller lends for the write's duration.
+///
+/// Returns [`lore_storage::write_content_borrowed`]'s future mapped to the address, without a
+/// future of its own. The write reads `buffer` in place and holds no reference to it once done.
+pub fn write_borrowed(
+    repository: Arc<RepositoryContext>,
+    context: Context,
+    buffer: &[u8],
+    flags: WriteOptions,
+) -> impl Future<Output = Result<Address, ImmutableError>> {
+    let session = if flags.remote_write {
+        resolve_session(&repository)
+    } else {
+        None
+    };
+    lore_storage::write_content_borrowed(
+        repository.immutable_store(),
+        repository.id,
+        context,
+        buffer,
+        flags,
+        session,
+        write_context(None),
+        None,
+    )
+    .map(|written| {
+        written
+            .map(|written| written.address)
+            .forward::<ImmutableError>("writing immutable content")
+    })
 }
 
 /// Tracker-aware variant of [`write`].
@@ -866,25 +897,22 @@ where
     }
 }
 
-#[async_trait]
-pub trait WriteToImmutable: zerocopy::IntoBytes + zerocopy::Immutable + std::marker::Send {
-    async fn write_to_immutable(
+pub trait WriteToImmutable: zerocopy::IntoBytes + zerocopy::Immutable {
+    /// Writes the value's bytes to the immutable store, returning their address.
+    ///
+    /// Returns [`write_borrowed`]'s future, not boxed. It reads the value in place for as long as
+    /// the write runs, and borrows it.
+    fn write_to_immutable(
         &self,
         repository: Arc<RepositoryContext>,
         context: Context,
         flags: WriteOptions,
-    ) -> Result<Address, ImmutableError> {
-        let self_slice = self.as_bytes();
-        // Unsafe extension of the lifetime of the self-as-buffer memory. Since
-        // we await the task and no shared references of the buffer will be kept
-        // around this is safe.
-        let buffer = Bytes::from_static(unsafe { extend_lifetime(self_slice) });
-        write(repository, context, buffer, flags).await
+    ) -> impl Future<Output = Result<Address, ImmutableError>> + Send {
+        write_borrowed(repository, context, self.as_bytes(), flags)
     }
 }
 
-impl<T> WriteToImmutable for T where T: zerocopy::IntoBytes + zerocopy::Immutable + std::marker::Send
-{}
+impl<T> WriteToImmutable for T where T: zerocopy::IntoBytes + zerocopy::Immutable {}
 
 #[cfg(test)]
 mod session_tests {

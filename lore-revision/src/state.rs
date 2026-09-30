@@ -833,20 +833,24 @@ impl State {
                         block.node_name_repack();
                         if block.is_nametable_deserialized() {
                             lore_trace!("Serializing dirty node block {} name table", block_index);
-                            let name_table = block.read().clone_name_table();
-                            let name_table = if !name_table.is_empty() {
-                                immutable::write(
-                                    repository.clone(),
-                                    Context::default(),
-                                    name_table,
-                                    immutable::write_options_from_repository(repository.clone())
+                            let name_table = {
+                                let reader = block.read_owned();
+                                if reader.name_table().is_empty() {
+                                    Address::default()
+                                } else {
+                                    immutable::write_borrowed(
+                                        repository.clone(),
+                                        Context::default(),
+                                        reader.name_table(),
+                                        immutable::write_options_from_repository(
+                                            repository.clone(),
+                                        )
                                         .with_local_cache_priority()
                                         .with_max_size_chunk(),
-                                )
-                                .await
-                                .forward::<StateError>("Failed to serialize node block")?
-                            } else {
-                                Address::default()
+                                    )
+                                    .await
+                                    .forward::<StateError>("Failed to serialize node block")?
+                                }
                             };
                             {
                                 let mut writer = block.write();

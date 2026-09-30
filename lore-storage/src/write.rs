@@ -523,13 +523,51 @@ pub fn store_fragment(
         partition,
         address,
         fragment,
-        buffer,
+        Payload::Shared(buffer),
         cache_local,
         remote_session,
         writes,
         permit,
         None,
     )
+}
+
+/// The payload a store writes: a buffer the stores and transports can keep, or content its caller
+/// lends for the store's duration.
+///
+/// Lent content is only read in place. The stores and transports take `Bytes` and receive the
+/// compressed payload, the payload loaded back from the local store, or a copy of the content.
+pub(crate) enum Payload<'a> {
+    Shared(Bytes),
+    Lent(&'a [u8]),
+}
+
+impl Payload<'_> {
+    fn as_slice(&self) -> &[u8] {
+        match self {
+            Payload::Shared(buffer) => buffer,
+            Payload::Lent(content) => content,
+        }
+    }
+
+    /// A buffer the stores and transports can keep. Lent content is copied into one once, and the
+    /// payload holds that copy from then on.
+    fn share(&mut self) -> Bytes {
+        let buffer = match self {
+            Payload::Shared(buffer) => return buffer.clone(),
+            Payload::Lent(content) => Bytes::copy_from_slice(content),
+        };
+        *self = Payload::Shared(buffer.clone());
+        buffer
+    }
+
+    /// The payload as a buffer the stores and transports can keep, copying lent content.
+    fn into_shared(self) -> Bytes {
+        match self {
+            Payload::Shared(buffer) => buffer,
+            Payload::Lent(content) => Bytes::copy_from_slice(content),
+        }
+    }
 }
 
 /// A `KeyType::Resolve` mapping to publish in the same remote command that uploads a tree's
@@ -594,6 +632,8 @@ impl FusedPublish {
 /// content already durable, or another writer's upload deduplicated this one — so the caller still
 /// owes the key a mapping write of its own.
 ///
+/// A lent payload is stored inline too, as the dispatched leader outlives the call.
+///
 /// Not an `async fn`, which would hold a second copy of its arguments.
 #[allow(clippy::too_many_arguments, clippy::manual_async_fn)]
 pub(crate) fn store_fragment_publishing(
@@ -601,7 +641,7 @@ pub(crate) fn store_fragment_publishing(
     partition: Partition,
     address: Address,
     fragment: Fragment,
-    buffer: Bytes,
+    buffer: Payload<'_>,
     cache_local: bool,
     remote_session: Option<Arc<StorageSession>>,
     writes: WriteContext,
@@ -609,7 +649,7 @@ pub(crate) fn store_fragment_publishing(
     publish: Option<Hash>,
 ) -> impl Future<Output = Result<StoreResult, StorageError>> {
     async move {
-        if address.hash.is_zero() || buffer.is_empty() || fragment.size_payload == 0 {
+        if address.hash.is_zero() || buffer.as_slice().is_empty() || fragment.size_payload == 0 {
             return Err(StorageError::internal(
                 "zero size or zero hash buffers can not be stored",
             ));
@@ -623,10 +663,10 @@ pub(crate) fn store_fragment_publishing(
                 ),
             }));
         }
-        if fragment.size_payload as usize != buffer.len() {
+        if fragment.size_payload as usize != buffer.as_slice().len() {
             return Err(StorageError::internal(format!(
                 "store_fragment buffer length mismatch: buffer {} vs size_payload {}",
-                buffer.len(),
+                buffer.as_slice().len(),
                 fragment.size_payload
             )));
         }
@@ -634,37 +674,36 @@ pub(crate) fn store_fragment_publishing(
         writes.count(|stats| stats.fragment_produced(&fragment));
 
         let tracker = writes.tracker().cloned().filter(|_| publish.is_none());
-        let result = match tracker {
-            None => {
-                store_fragment_inline(
-                    store,
-                    partition,
-                    address,
-                    fragment,
-                    buffer,
-                    cache_local,
-                    remote_session,
-                    &writes,
-                    permit,
-                    publish,
-                )
-                .await
-            }
-            Some(tracker) => {
-                store_fragment_dispatched(
-                    store,
-                    partition,
-                    address,
-                    fragment,
-                    buffer,
-                    cache_local,
-                    remote_session,
-                    &tracker,
-                    &writes,
-                    permit,
-                )
-                .await
-            }
+        let result = if let Some(tracker) = tracker
+            && let Payload::Shared(buffer) = buffer
+        {
+            store_fragment_dispatched(
+                store,
+                partition,
+                address,
+                fragment,
+                buffer,
+                cache_local,
+                remote_session,
+                &tracker,
+                &writes,
+                permit,
+            )
+            .await
+        } else {
+            store_fragment_inline(
+                store,
+                partition,
+                address,
+                fragment,
+                buffer,
+                cache_local,
+                remote_session,
+                &writes,
+                permit,
+                publish,
+            )
+            .await
         };
 
         if let (Some(tracker), Ok(result)) = (writes.tracker(), &result) {
@@ -708,7 +747,7 @@ fn store_fragment_inline(
     partition: Partition,
     address: Address,
     fragment: Fragment,
-    buffer: Bytes,
+    buffer: Payload<'_>,
     cache_local: bool,
     remote_session: Option<Arc<StorageSession>>,
     writes: &WriteContext,
@@ -896,7 +935,7 @@ async fn store_fragment_dispatched(
         partition,
         address,
         fragment,
-        buffer,
+        Payload::Shared(buffer),
         cache_local,
         remote_session,
         query,
@@ -1059,7 +1098,7 @@ fn leader_body(
     partition: Partition,
     address: Address,
     mut fragment: Fragment,
-    mut buffer: Bytes,
+    mut buffer: Payload<'_>,
     cache_local: bool,
     remote_session: Option<Arc<StorageSession>>,
     query: StoreMatchResult,
@@ -1111,7 +1150,7 @@ fn leader_body(
                 );
                 if address.hash == loaded_hash {
                     fragment = stored_fragment;
-                    buffer = stored_buffer;
+                    buffer = Payload::Shared(stored_buffer);
                 } else {
                     stored_local = false;
                 }
@@ -1130,7 +1169,7 @@ fn leader_body(
             let _compress_permit = crate::concurrency::compress_limit_acquire().await;
             if let Ok((compressed_fragment, compressed_buffer)) = crate::compress::compress(
                 fragment,
-                &buffer.as_ref()[..fragment.size_payload as usize],
+                &buffer.as_slice()[..fragment.size_payload as usize],
                 mode,
             ) {
                 lore_base::lore_trace!(
@@ -1139,7 +1178,7 @@ fn leader_body(
                     compressed_fragment.size_payload
                 );
                 fragment = compressed_fragment;
-                buffer = compressed_buffer;
+                buffer = Payload::Shared(compressed_buffer);
             }
         }
 
@@ -1160,13 +1199,13 @@ fn leader_body(
                         key,
                         address,
                         fragment,
-                        Some(buffer.clone()),
+                        Some(buffer.share()),
                     )
                     .await
                     .is_ok();
                     published
                 }
-                None => remote_put_retry(session, address, fragment, Some(buffer.clone()))
+                None => remote_put_retry(session, address, fragment, Some(buffer.share()))
                     .await
                     .is_ok(),
             };
@@ -1197,7 +1236,7 @@ fn leader_body(
         }
 
         let (payload, permit) = if !stored_durable || cache_local {
-            (Some(buffer), permit)
+            (Some(buffer.into_shared()), permit)
         } else {
             drop(buffer);
             drop(permit);
@@ -1290,11 +1329,11 @@ impl Drop for ContentWriteGuard {
 ///
 /// Shared by [`write_content`] and [`write_content_publishing`] so the two cannot disagree on what
 /// a single-fragment write is addressed as.
-fn single_fragment(context: Context, buffer: &Bytes, flags: WriteOptions) -> (Address, Fragment) {
+fn single_fragment(context: Context, buffer: &[u8], flags: WriteOptions) -> (Address, Fragment) {
     (
         Address {
             context,
-            hash: hash::hash_slice(buffer.as_ref()),
+            hash: hash::hash_slice(buffer),
         },
         Fragment {
             flags: flags.into(),
@@ -1338,7 +1377,7 @@ pub(crate) async fn write_content_publishing(
         partition,
         address,
         fragment,
-        buffer,
+        Payload::Shared(buffer),
         flags.local_cache_priority,
         remote_session,
         writes,
@@ -1379,7 +1418,7 @@ pub fn write_content(
                 store,
                 partition,
                 context,
-                buffer,
+                Payload::Shared(buffer),
                 flags,
                 remote_session,
                 writes,
@@ -1423,18 +1462,18 @@ fn write_single_fragment(
     store: Arc<dyn ImmutableStore>,
     partition: Partition,
     context: Context,
-    buffer: Bytes,
+    buffer: Payload<'_>,
     flags: WriteOptions,
     remote_session: Option<Arc<StorageSession>>,
     writes: WriteContext,
     permit: Option<OwnedSemaphorePermit>,
 ) -> impl Future<Output = Result<StoreResult, StorageError>> {
     async move {
-        let (address, fragment) = single_fragment(context, &buffer, flags);
+        let (address, fragment) = single_fragment(context, buffer.as_slice(), flags);
         if flags.hash_only {
             return Ok(StoreResult {
                 address,
-                size_content: buffer.len() as u64,
+                size_content: buffer.as_slice().len() as u64,
                 stored_local: false,
                 stored_durable: false,
                 deduplicated: false,
@@ -1445,9 +1484,11 @@ fn write_single_fragment(
         // Reuse the caller's read reservation if provided, else reserve here.
         let permit = match permit {
             Some(permit) => Some(permit),
-            None => crate::concurrency::acquire_fragment_memory_permit(buffer.len()).await,
+            None => {
+                crate::concurrency::acquire_fragment_memory_permit(buffer.as_slice().len()).await
+            }
         };
-        store_fragment(
+        store_fragment_publishing(
             store,
             partition,
             address,
@@ -1457,9 +1498,54 @@ fn write_single_fragment(
             remote_session,
             writes,
             permit,
+            None,
         )
         .await
     }
+}
+
+/// [`write_content`] for content its caller lends for the write's duration.
+///
+/// The content is only read in place, and the write holds no reference to it once done: the stores
+/// and transports receive the compressed payload, the payload loaded back from the local store, or a
+/// copy. Content larger than one fragment is copied first, as its chunks are stored by tasks that can
+/// outlive the write; that path is cold, so it is boxed.
+#[allow(clippy::too_many_arguments)]
+pub async fn write_content_borrowed(
+    store: Arc<dyn ImmutableStore>,
+    partition: Partition,
+    context: Context,
+    buffer: &[u8],
+    flags: WriteOptions,
+    remote_session: Option<Arc<StorageSession>>,
+    writes: WriteContext,
+    permit: Option<OwnedSemaphorePermit>,
+) -> Result<StoreResult, StorageError> {
+    if buffer.len() > crate::compress::FRAGMENT_SIZE_THRESHOLD {
+        return Box::pin(write_content(
+            store,
+            partition,
+            context,
+            Bytes::copy_from_slice(buffer),
+            flags,
+            remote_session,
+            writes,
+            permit,
+        ))
+        .await;
+    }
+    let _in_flight = (!flags.hash_only).then(ContentWriteGuard::new);
+    write_single_fragment(
+        store,
+        partition,
+        context,
+        Payload::Lent(buffer),
+        flags,
+        remote_session,
+        writes,
+        permit,
+    )
+    .await
 }
 
 /// Write content from a file.
@@ -1521,7 +1607,7 @@ pub fn write_from_file(
                 store,
                 partition,
                 context,
-                buffer,
+                Payload::Shared(buffer),
                 flags,
                 remote_session,
                 writes,
@@ -4516,6 +4602,96 @@ mod tests {
             size_of_val(&file),
             size_of_val(&content)
         );
+    }
+
+    /// High-entropy content, which compression cannot shrink, so a write stores it as it came.
+    fn incompressible_content(length: usize) -> Vec<u8> {
+        let mut state = 0x9E37_79B9_7F4A_7C15_u64;
+        (0..length)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                (state >> 32) as u8
+            })
+            .collect()
+    }
+
+    /// The entries a lent write and a shared write of `content` leave, each in a store of its own.
+    async fn lent_and_shared_entries(content: &[u8]) -> ((Fragment, Bytes), (Fragment, Bytes)) {
+        let (partition, address) = make_address(0x40);
+        let (_lent_dir, lent_store) = make_test_store().await;
+        let (_shared_dir, shared_store) = make_test_store().await;
+        let lent = write_content_borrowed(
+            lent_store.clone(),
+            partition,
+            address.context,
+            content,
+            WriteOptions::default(),
+            None,
+            WriteContext::none(),
+            None,
+        )
+        .await
+        .expect("lent write");
+        let shared = write_content(
+            shared_store.clone(),
+            partition,
+            address.context,
+            Bytes::copy_from_slice(content),
+            WriteOptions::default(),
+            None,
+            WriteContext::none(),
+            None,
+        )
+        .await
+        .expect("shared write");
+        assert_eq!(lent.address, shared.address);
+        let lent_entry = lent_store
+            .get(partition, lent.address)
+            .await
+            .and_then(StoreGetData::into_payload)
+            .expect("lent entry");
+        let shared_entry = shared_store
+            .get(partition, shared.address)
+            .await
+            .and_then(StoreGetData::into_payload)
+            .expect("shared entry");
+        (lent_entry, shared_entry)
+    }
+
+    /// The upload and the local write of lent content keep one copy of it.
+    #[test]
+    fn lent_content_is_copied_once() {
+        let content = incompressible_content(64);
+        let mut payload = Payload::Lent(&content);
+        let uploaded = payload.share();
+        let stored = payload.into_shared();
+        assert_eq!(uploaded, content);
+        assert_eq!(uploaded.as_ptr(), stored.as_ptr());
+    }
+
+    #[tokio::test]
+    async fn lent_content_that_compresses_is_stored_compressed() {
+        let content = vec![7; 4096];
+        let (lent, shared) = lent_and_shared_entries(&content).await;
+        assert_eq!(lent, shared);
+        assert!(lent.1.len() < content.len());
+    }
+
+    #[tokio::test]
+    async fn lent_content_that_does_not_compress_is_stored_as_a_copy() {
+        let content = incompressible_content(4096);
+        let (lent, shared) = lent_and_shared_entries(&content).await;
+        assert_eq!(lent, shared);
+        assert_eq!(lent.1, content);
+    }
+
+    #[tokio::test]
+    async fn lent_content_over_one_fragment_is_stored_fragmented() {
+        let content = hash_test_content(crate::compress::FRAGMENT_SIZE_THRESHOLD + 4096);
+        let (lent, shared) = lent_and_shared_entries(&content).await;
+        assert_eq!(lent, shared);
     }
 }
 
