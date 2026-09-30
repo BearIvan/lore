@@ -5,6 +5,7 @@ use lore_proto::lore::environment::v1::Endpoint;
 use lore_proto::lore::environment::v1::Environment;
 use lore_proto::lore::environment::v1::EnvironmentGetRequest;
 use lore_proto::lore::environment::v1::EnvironmentGetResponse;
+use lore_proto::lore::environment::v1::Oidc;
 use lore_proto::lore::environment::v1::environment_service_server::EnvironmentService;
 use lore_storage::CompressionMode;
 use tonic::Request;
@@ -48,12 +49,26 @@ fn config_to_proto(config: &Option<lore_revision::environment::Config>) -> Optio
     })
 }
 
+fn oidc_to_proto(oidc: &lore_transport::Oidc) -> Oidc {
+    Oidc {
+        issuer: oidc.issuer.clone(),
+        client_id: oidc.client_id.clone(),
+        scopes: oidc.scopes.clone(),
+        preferred: oidc.preferred,
+        resource_template: oidc.resource_template.clone().unwrap_or_default(),
+        scope_template: oidc.scope_template.clone().unwrap_or_default(),
+        token_exchange_issuer: oidc.token_exchange_issuer.clone().unwrap_or_default(),
+        identity_claim: oidc.identity_claim.clone().unwrap_or_default(),
+    }
+}
+
 fn environment_to_proto(
     environment: &lore_revision::environment::EnvironmentConfig,
 ) -> Environment {
     Environment {
         endpoint: endpoint_to_proto(&environment.endpoint),
         config: config_to_proto(&environment.config),
+        oidc: environment.oidc.as_ref().map(oidc_to_proto),
     }
 }
 
@@ -109,5 +124,27 @@ mod tests {
         service: LoreEnvironmentV1Service,
     ) -> EnvironmentServiceServer<LoreEnvironmentV1Service> {
         EnvironmentServiceServer::new(service)
+    }
+
+    #[test]
+    fn the_provider_is_advertised_only_when_resolved() {
+        let mut environment = lore_revision::environment::EnvironmentConfig::default();
+        assert_eq!(environment_to_proto(&environment).oidc, None);
+
+        environment.oidc = Some(lore_transport::Oidc {
+            issuer: "https://auth.example.com".to_string(),
+            client_id: "lore-cli".to_string(),
+            identity_claim: Some("sub".to_string()),
+            ..Default::default()
+        });
+        assert_eq!(
+            environment_to_proto(&environment).oidc,
+            Some(Oidc {
+                issuer: "https://auth.example.com".to_string(),
+                client_id: "lore-cli".to_string(),
+                identity_claim: "sub".to_string(),
+                ..Default::default()
+            })
+        );
     }
 }

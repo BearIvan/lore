@@ -13,6 +13,7 @@ use serde::Deserialize;
 pub struct EnvironmentConfig {
     pub endpoint: Option<Endpoint>,
     pub config: Option<EnvironmentServerConfig>,
+    pub oidc: Option<Oidc>,
 }
 
 impl EnvironmentConfig {
@@ -104,6 +105,41 @@ pub struct Endpoint {
     /// User directory endpoint: resolves user IDs to display names and back.
     /// Falls back to `auth_url` if empty.
     pub user_url: Option<String>,
+}
+
+/// The OIDC provider a server advertises.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize)]
+#[serde(bound(deserialize = "'de: 'static"))]
+pub struct Oidc {
+    /// Issuer URL. The provider's endpoints come from its discovery document,
+    /// `<issuer>/.well-known/openid-configuration`.
+    pub issuer: String,
+    /// The public client ID presented to the provider.
+    pub client_id: String,
+    /// Default scopes to request at login. Empty leaves the choice to the client.
+    pub scopes: Vec<String>,
+    /// Whether a client takes the OIDC path by default rather than `auth_url`.
+    pub preferred: bool,
+    /// Maps a partition to an RFC 8707 resource, `{id}` standing for the partition ID.
+    pub resource_template: Option<String>,
+    /// Maps a partition to a scope value, `{id}` standing for the partition ID.
+    pub scope_template: Option<String>,
+    /// The issuer of the RFC 8693 token-exchange endpoint that mints partition-scoped tokens.
+    pub token_exchange_issuer: Option<String>,
+    pub identity_claim: Option<String>,
+}
+
+impl Oidc {
+    pub const DEFAULT_IDENTITY_CLAIM: &'static str = "sub";
+
+    /// The claim recorded as the user identity: the advertised one, or `sub` when the server
+    /// names none.
+    pub fn identity_claim(&self) -> &str {
+        match self.identity_claim.as_deref() {
+            Some(claim) if !claim.is_empty() => claim,
+            _ => Self::DEFAULT_IDENTITY_CLAIM,
+        }
+    }
 }
 
 /// A compression mode as it arrives from a server, held as the number it was sent as: the codec
@@ -283,6 +319,7 @@ mod tests {
         EnvironmentConfig {
             endpoint: Some(endpoint),
             config: None,
+            oidc: None,
         }
     }
 
@@ -323,6 +360,7 @@ mod tests {
         let env = EnvironmentConfig {
             endpoint: None,
             config: None,
+            oidc: None,
         };
         assert_eq!(env.storage_url(FALLBACK), FALLBACK);
         assert_eq!(env.repository_url(FALLBACK), FALLBACK);
@@ -365,6 +403,27 @@ mod tests {
             })
             .user_url(AUTH_URL),
             "ucs-auth://directory.example.com"
+        );
+    }
+
+    #[test]
+    fn identity_claim_defaults_to_sub_until_advertised() {
+        assert_eq!(Oidc::default().identity_claim(), "sub");
+        assert_eq!(
+            Oidc {
+                identity_claim: Some(String::new()),
+                ..Default::default()
+            }
+            .identity_claim(),
+            "sub"
+        );
+        assert_eq!(
+            Oidc {
+                identity_claim: Some("email".into()),
+                ..Default::default()
+            }
+            .identity_claim(),
+            "email"
         );
     }
 }

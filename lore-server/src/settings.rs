@@ -19,6 +19,7 @@ use lore_telemetry::TraceConfigError;
 use serde::Deserialize;
 
 use crate::auth::jwk::JWKServiceSettings;
+use crate::authnz::repository_authorizer::AuthorizerSelection;
 use crate::authnz::repository_authorizer::select_repository_authorizer;
 use crate::authnz::repository_catalog::select_repository_catalog;
 use crate::grpc::server::FeatureSettings;
@@ -187,7 +188,7 @@ fn validate_auth_config(settings: &Settings) -> Result<(), config::ConfigError> 
         .and_then(|endpoint| endpoint.auth_url.as_deref());
     // Run the authorizer and catalog selection at load, so a refused pairing
     // bails here, before any initialization, instead of at server startup.
-    select_repository_authorizer(auth, auth_url)
+    let authorizer = select_repository_authorizer(auth, auth_url)
         .map_err(|err| config::ConfigError::Message(err.to_string()))?;
     select_repository_catalog(auth, auth_url)
         .map_err(|err| config::ConfigError::Message(err.to_string()))?;
@@ -221,7 +222,69 @@ fn validate_auth_config(settings: &Settings) -> Result<(), config::ConfigError> 
             ));
         }
     }
-    Ok(())
+    validate_oidc_config(auth, authorizer)
+}
+
+/// Tier 1 and Tier 2 have no login path besides OIDC, so they require
+/// `[server.auth.oidc]`. If grpc auth service is configured, it is optional.
+fn validate_oidc_config(
+    auth: &AuthSettings,
+    selection: AuthorizerSelection,
+) -> Result<(), config::ConfigError> {
+    let error = |message: &str| Err(config::ConfigError::Message(message.to_string()));
+    let Some(oidc) = auth.oidc.as_ref() else {
+        return match selection {
+            AuthorizerSelection::GlobalGrants | AuthorizerSelection::ResourceGrants => error(
+                "[server.auth] without [environment.endpoint] auth_url authorizes OIDC tokens, \
+                 so clients need [server.auth.oidc] to log in.",
+            ),
+            AuthorizerSelection::AllowAll | AuthorizerSelection::AuthClient => Ok(()),
+        };
+    };
+    let is_issuer_url = auth.jwt_issuer.first().is_some_and(|issuer| {
+        reqwest::Url::parse(issuer).is_ok_and(|url| matches!(url.scheme(), "http" | "https"))
+    });
+    if !is_issuer_url {
+        return error(
+            "server.auth.oidc requires the first server.auth.jwt_issuer entry to be the \
+             provider's issuer URL",
+        );
+    }
+    if oidc.client_id.is_empty() {
+        return error("server.auth.oidc.client_id must not be empty");
+    }
+    let is_set = |value: &Option<String>| value.as_ref().is_some_and(|value| !value.is_empty());
+    let has_template = match (
+        is_set(&oidc.resource_template),
+        is_set(&oidc.scope_template),
+    ) {
+        (true, true) => {
+            return error(
+                "server.auth.oidc.resource_template and server.auth.oidc.scope_template are \
+                 both set. Set one",
+            );
+        }
+        (resource, scope) => resource || scope,
+    };
+    if is_set(&oidc.token_exchange_issuer) && !has_template {
+        return error(
+            "server.auth.oidc.token_exchange_issuer is set without \
+             server.auth.oidc.resource_template or server.auth.oidc.scope_template",
+        );
+    }
+    match (selection, has_template) {
+        (AuthorizerSelection::ResourceGrants, false) => error(
+            "server.auth.resource_claim authorizes per partition, but neither \
+             server.auth.oidc.resource_template nor server.auth.oidc.scope_template is set, so \
+             clients never ask for partition-scoped tokens. Set one, or remove resource_claim",
+        ),
+        (AuthorizerSelection::GlobalGrants, true) => error(
+            "server.auth.oidc.resource_template or server.auth.oidc.scope_template is set, but \
+             without server.auth.resource_claim the server never reads partition-scoped tokens. \
+             Set resource_claim, or remove the template",
+        ),
+        _ => Ok(()),
+    }
 }
 
 fn validate_trace_config(settings: &Settings) -> Result<(), config::ConfigError> {
@@ -326,6 +389,33 @@ pub struct AuthSettings {
     /// The `UrcAuthApi` endpoint the `auth_service` catalog asks. Absent:
     /// `[environment.endpoint] auth_url`.
     pub repository_catalog_url: Option<String>,
+    /// OIDC provider settings advertised for clients.
+    pub oidc: Option<OidcSettings>,
+}
+
+/// What the environment service advertises about the OIDC provider,
+/// beyond what the server reads from `jwt_issuer`'s discovery document and the
+/// rest of `[server.auth]`.
+#[derive(Clone, Debug, Deserialize)]
+pub struct OidcSettings {
+    /// The public client ID clients present to the provider.
+    pub client_id: String,
+    /// Default scopes clients request at login.
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    /// Whether a client should default to OIDC login or use gRPC auth at
+    /// at `[environment.endpoint] auth_url`.
+    #[serde(default)]
+    pub preferred: bool,
+    /// Template string for mapping a partition as an RFC 8707 resource, with
+    /// `{id}` standing for the partition ID. Tier 2.
+    pub resource_template: Option<String>,
+    /// Template string for mapping a partition as a scope value, with
+    /// `{id}` standing for the partition ID. Tier 2.
+    pub scope_template: Option<String>,
+    /// The issuer of the RFC 8693 token-exchange endpoint, if using a separate
+    /// token service. If not set, uses the first `jwt_issuer` entry. Tier 2.
+    pub token_exchange_issuer: Option<String>,
 }
 
 impl AuthSettings {
@@ -990,10 +1080,223 @@ mod tests {
             jwt_issuer = "https://auth.example.com"
             jwt_audience = ["lore-service"]
             jwt_typ = ["at+jwt", "JWT"]
+
+            [server.auth.oidc]
+            client_id = "lore-cli"
         "#,
         )
         .expect("a jwt_typ list must parse");
         validate_auth_config(&settings).expect("a jwt_typ list must validate");
+    }
+
+    const TIER_1: &str = "";
+    const TIER_2: &str = r#"resource_claim = "resources""#;
+    const AUTH_SERVICE: &str = r#"
+            [environment.endpoint]
+            auth_url = "ucs-auth://auth.example.com"
+            "#;
+
+    /// `authorizer_keys` selects the authorizer: [`TIER_1`], [`TIER_2`] or
+    /// [`AUTH_SERVICE`].
+    fn settings_with_oidc_keys(authorizer_keys: &str, oidc_keys: &str) -> Settings {
+        settings_with_auth_keys(&format!(
+            r#"
+            jwt_issuer = "https://auth.example.com"
+            jwt_audience = ["lore-service"]
+            {authorizer_keys}
+
+            [server.auth.oidc]
+            client_id = "lore-cli"
+            {oidc_keys}
+        "#
+        ))
+        .expect("[server.auth.oidc] must parse")
+    }
+
+    #[test]
+    fn oidc_settings_default_to_no_scopes_and_not_preferred() {
+        let settings = settings_with_oidc_keys(TIER_1, "");
+        let oidc = settings
+            .server
+            .auth
+            .and_then(|auth| auth.oidc)
+            .expect("[server.auth.oidc] is present");
+        assert_eq!(oidc.client_id, "lore-cli");
+        assert!(oidc.scopes.is_empty());
+        assert!(!oidc.preferred);
+        assert_eq!(oidc.resource_template, None);
+        assert_eq!(oidc.scope_template, None);
+        assert_eq!(oidc.token_exchange_issuer, None);
+    }
+
+    #[test]
+    fn oidc_templates_that_match_the_authorizer_pass_validation() {
+        let tier_2_forms = [
+            r#"resource_template = "https://lore.example.com/partitions/{id}""#,
+            r#"scope_template = "partition:{id}""#,
+            r#"
+            token_exchange_issuer = "https://sts.example.com"
+            resource_template = "https://lore.example.com/partitions/{id}"
+            "#,
+            r#"
+            token_exchange_issuer = "https://sts.example.com"
+            scope_template = "partition:{id}"
+            "#,
+        ];
+        let mut cases = vec![(TIER_1, ""), (AUTH_SERVICE, "")];
+        for keys in tier_2_forms {
+            cases.push((TIER_2, keys));
+            cases.push((AUTH_SERVICE, keys));
+        }
+        for (authorizer_keys, oidc_keys) in cases {
+            validate_auth_config(&settings_with_oidc_keys(authorizer_keys, oidc_keys))
+                .unwrap_or_else(|error| {
+                    panic!("{authorizer_keys} with {oidc_keys} must validate: {error}")
+                });
+        }
+    }
+
+    /// Tier 1 and Tier 2 offer clients no login path besides OIDC.
+    #[test]
+    fn oidc_is_required_without_the_auth_service() {
+        for authorizer_keys in [TIER_1, TIER_2] {
+            let settings = settings_with_auth_keys(&format!(
+                r#"
+                jwt_issuer = "https://auth.example.com"
+                jwt_audience = ["lore-service"]
+                {authorizer_keys}
+            "#
+            ))
+            .expect("[server.auth] must parse");
+            let error = validate_auth_config(&settings)
+                .expect_err("Tier 1 and Tier 2 must advertise the OIDC provider");
+            assert!(
+                error.to_string().contains("[server.auth.oidc]"),
+                "the error must name the table: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn oidc_is_optional_beside_the_auth_service() {
+        let settings = settings_with_auth_keys(&format!(
+            r#"
+            jwt_issuer = "https://auth.example.com"
+            jwt_audience = ["lore-service"]
+            {AUTH_SERVICE}
+        "#
+        ))
+        .expect("[server.auth] must parse");
+        validate_auth_config(&settings).expect("the auth service is a login path of its own");
+    }
+
+    /// Clients must ask for the tokens the authorizer reads: partition-scoped
+    /// under Tier 2, and not under Tier 1.
+    #[test]
+    fn oidc_templates_that_contradict_the_authorizer_fail_validation() {
+        let cases = [
+            (TIER_2, "", ["resource_claim", "resource_template"]),
+            (
+                TIER_1,
+                r#"resource_template = "https://lore.example.com/partitions/{id}""#,
+                ["resource_claim", "resource_template"],
+            ),
+            (
+                TIER_1,
+                r#"scope_template = "partition:{id}""#,
+                ["resource_claim", "scope_template"],
+            ),
+        ];
+        for (authorizer_keys, oidc_keys, named) in cases {
+            let error = validate_auth_config(&settings_with_oidc_keys(authorizer_keys, oidc_keys))
+                .expect_err("the templates must match the authorizer");
+            let message = error.to_string();
+            for setting in named {
+                assert!(
+                    message.contains(setting),
+                    "the error must name {setting}: {message}"
+                );
+            }
+        }
+    }
+
+    /// An exchange issuer without a template, or both templates, is a startup
+    /// error naming both sides, never a silent fall back to Tier 1.
+    #[test]
+    fn oidc_invalid_tier_2_fails_validation_naming_both_settings() {
+        let cases = [
+            (
+                r#"token_exchange_issuer = "https://sts.example.com""#,
+                ["token_exchange_issuer", "resource_template"],
+            ),
+            (
+                r#"
+                token_exchange_issuer = "https://sts.example.com"
+                resource_template = "https://lore.example.com/partitions/{id}"
+                scope_template = "partition:{id}"
+                "#,
+                ["resource_template", "scope_template"],
+            ),
+        ];
+        for (keys, named) in cases {
+            let error = validate_auth_config(&settings_with_oidc_keys(TIER_2, keys))
+                .expect_err("an invalid Tier 2 configuration must fail validation");
+            let message = error.to_string();
+            for setting in named {
+                assert!(
+                    message.contains(&format!("server.auth.oidc.{setting}")),
+                    "the error must name {setting}: {message}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn oidc_with_a_keyword_jwt_issuer_fails_validation() {
+        let settings = settings_with_auth_keys(
+            r#"
+            jwt_issuer = ["LEGACY_AUTH_KEYWORD", "https://auth.example.com"]
+            jwt_audience = ["lore-service"]
+
+            [server.auth.oidc]
+            client_id = "lore-cli"
+        "#,
+        )
+        .expect("[server.auth.oidc] must parse");
+        let error = validate_auth_config(&settings)
+            .expect_err("advertising OIDC needs an issuer URL to discover");
+        assert!(
+            error.to_string().contains("jwt_issuer"),
+            "the error must name the setting: {error}"
+        );
+    }
+
+    #[test]
+    fn oidc_client_id_is_required_and_not_empty() {
+        let missing = settings_with_auth_keys(
+            r#"
+            jwt_issuer = "https://auth.example.com"
+            jwt_audience = ["lore-service"]
+
+            [server.auth.oidc]
+            preferred = true
+        "#,
+        )
+        .expect_err("[server.auth.oidc] without client_id must fail to parse");
+        assert!(missing.to_string().contains("client_id"), "{missing}");
+
+        let settings = settings_with_auth_keys(
+            r#"
+            jwt_issuer = "https://auth.example.com"
+            jwt_audience = ["lore-service"]
+
+            [server.auth.oidc]
+            client_id = ""
+        "#,
+        )
+        .expect("an empty client_id still parses");
+        let empty = validate_auth_config(&settings).expect_err("an empty client_id must fail");
+        assert!(empty.to_string().contains("client_id"), "{empty}");
     }
 
     /// Minimal loadable settings with the given `[server.auth]` keys, for the
@@ -1072,6 +1375,9 @@ mod tests {
             r#"
             jwt_issuer = "LEGACY_AUTH_KEYWORD"
             jwt_audience = ["lore-service", ".example.net"]
+
+            [environment.endpoint]
+            auth_url = "ucs-auth://auth.example.com"
         "#,
         )
         .expect("a complete [server.auth] must parse");

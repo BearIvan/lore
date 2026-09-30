@@ -5,7 +5,7 @@ authors:
   - Hannes Muurinen
 status: Approved
 created: 2026-08-20
-updated: 2026-09-21
+updated: 2026-09-25
 discussion: https://crowd.urc.internal.epicgames.net/epic/Lore/change-request/412
 ---
 
@@ -448,25 +448,30 @@ be told apart by scheme. Selection therefore keys on the presence of `oidc_issue
 during the migration by the opt-in described at the end of this section, and the scheme registry
 keeps serving the legacy path only.
 
-`lore.environment.v1.Endpoint`
-([`environment.proto`](../../lore-proto/proto/lore/environment/v1/environment.proto)) gains fields,
-all additive. This is the message the current client reads, through
-[`environment_client.rs`](../../lore-transport/src/grpc/environment_client.rs). The server populates
-them from `[environment.endpoint]`, the same table that holds `auth_url` today, so these are what
-an operator advertises rather than what the server enforces. The enforcement settings are
-`[server.auth]` in D8.
+`lore.environment.v1.Environment`
+([`environment.proto`](../../lore-proto/proto/lore/environment/v1/environment.proto)) gains an
+`oidc` field carrying a new `Oidc` message, all additive. This is the message the current client
+reads, through [`environment_client.rs`](../../lore-transport/src/grpc/environment_client.rs).
+`Endpoint` keeps describing only where services live. The server builds the message at startup
+from `[server.auth]`, the settings it verifies tokens with (D8), and from the issuer's discovery
+document. What `[server.auth]` does not already hold is in a new `[server.auth.oidc]` table.
+The rest of this proposal calls the first four fields
+`oidc_issuer`, `oidc_client_id`, `oidc_scopes` and `oidc_preferred`.
 
-| Field | Meaning |
-| --- | --- |
-| `oidc_issuer` | Issuer URL. The client fetches `<issuer>/.well-known/openid-configuration`. |
-| `oidc_client_id` | The public client ID Lorelib presents. |
-| `oidc_scopes` | Default scopes to request. |
-| `oidc_preferred` | Whether a client that expresses no preference should take the OIDC path. Absent or false keeps it on `auth_url` while both are advertised. |
-| `resource_template` | How to name a partition as an [RFC 8707](https://www.rfc-editor.org/rfc/rfc8707) resource, for example `https://lore.example.com/partitions/{id}`. The standard form and the default. |
-| `scope_template` | How to name a partition as a scope value instead, for example `partition:{id}`. For providers that reject `resource` or never see it on the exchange grant. |
-| `token_exchange_issuer` | The [RFC 8693](https://www.rfc-editor.org/rfc/rfc8693) endpoint to exchange against, whether that is the provider itself or a separate token service. |
-| `identity_claim` | The claim clients record as the user identity, `sub` by default (D7). Advertised so every client records the same form. |
-| `user_url` | The user directory clients resolve names at, `auth_url` by default (D7). Independent of the auth path, so an OIDC deployment can advertise a directory without a legacy auth service. |
+| `Oidc` field | Source | Meaning |
+| --- | --- | --- |
+| `issuer` | The first `[server.auth] jwt_issuer` entry, once its discovery document names the same issuer | Issuer URL. The client fetches `<issuer>/.well-known/openid-configuration`. |
+| `client_id` | `[server.auth.oidc]` | The public client ID Lorelib presents. |
+| `scopes` | `[server.auth.oidc]` | Default scopes to request. |
+| `preferred` | `[server.auth.oidc]` | Whether a client that expresses no preference should take the OIDC path. Absent or false keeps it on `auth_url` while both are advertised. |
+| `resource_template` | `[server.auth.oidc]` | How to name a partition as an [RFC 8707](https://www.rfc-editor.org/rfc/rfc8707) resource, for example `https://lore.example.com/partitions/{id}`. The standard form and the default. |
+| `scope_template` | `[server.auth.oidc]` | How to name a partition as a scope value instead, for example `partition:{id}`. For providers that reject `resource` or never see it on the exchange grant. |
+| `token_exchange_issuer` | `[server.auth.oidc]` | The [RFC 8693](https://www.rfc-editor.org/rfc/rfc8693) endpoint to exchange against, whether that is the provider itself or a separate token service. |
+| `identity_claim` | `[server.auth] identity_claim` | The claim clients record as the user identity, `sub` by default (D7). Advertised so every client records the same form. |
+
+`Endpoint` gains `user_url`, from `[environment.endpoint]`: the user directory clients resolve
+names at, `auth_url` by default (D7). Independent of the auth path, so an OIDC deployment can
+advertise a directory without a legacy auth service.
 
 The list of hosts a token may be sent to is deliberately *not* advertised here: it comes from the
 issuer-signed token, because the environment response is served by the same party a stolen token
@@ -1159,7 +1164,8 @@ than requiring a claim for a partition that does not exist.
 
 - **Wire format** — N/A. The QUIC `Authorize` frame's token field is length-prefixed opaque bytes
   and its layout does not change.
-- **Client/server protocols** — `lore.environment.v1.Endpoint` gains eight optional fields, and the
+- **Client/server protocols** — `lore.environment.v1.Environment` gains an optional `oidc`
+  message and `Endpoint` gains `user_url`, and the
   legacy `EnvironmentEndpoint` gains none, so a client on the legacy environment service is
   unaffected by shape as well as by behavior. A client on `v1` that predates the fields ignores
   them and reads `auth_url` as it does now, and a new client falls back to `auth_url` when

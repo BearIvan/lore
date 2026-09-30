@@ -14,6 +14,7 @@ use crate::error::ProtocolError;
 use crate::types::Endpoint;
 use crate::types::EnvironmentConfig;
 use crate::types::EnvironmentServerConfig;
+use crate::types::Oidc;
 use crate::types::ServerCompressionMode;
 
 impl From<lore_proto::lore::environment::v1::Environment> for EnvironmentConfig {
@@ -66,8 +67,27 @@ impl From<lore_proto::lore::environment::v1::Environment> for EnvironmentConfig 
                     .compression_mode
                     .map(|mode| ServerCompressionMode::from_u32(mode as u32)),
             }),
+            oidc: value.oidc.and_then(oidc_from_proto),
         }
     }
+}
+
+/// `None` for a message with no issuer: there is no provider to discover without one.
+fn oidc_from_proto(oidc: lore_proto::lore::environment::v1::Oidc) -> Option<Oidc> {
+    if oidc.issuer.is_empty() {
+        return None;
+    }
+    let non_empty = |value: String| (!value.is_empty()).then_some(value);
+    Some(Oidc {
+        issuer: oidc.issuer,
+        client_id: oidc.client_id,
+        scopes: oidc.scopes,
+        preferred: oidc.preferred,
+        resource_template: non_empty(oidc.resource_template),
+        scope_template: non_empty(oidc.scope_template),
+        token_exchange_issuer: non_empty(oidc.token_exchange_issuer),
+        identity_claim: non_empty(oidc.identity_claim),
+    })
 }
 
 #[derive(Clone)]
@@ -120,5 +140,74 @@ impl EnvironmentService {
                 "get: No environment config data in response",
             ))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use lore_proto::lore::environment::v1 as proto;
+
+    use super::*;
+
+    fn environment_with(oidc: Option<proto::Oidc>) -> EnvironmentConfig {
+        proto::Environment {
+            endpoint: Some(proto::Endpoint {
+                auth_url: "ucs-auth://auth.example.com".to_string(),
+                ..Default::default()
+            }),
+            config: None,
+            oidc,
+        }
+        .into()
+    }
+
+    /// What an old server sends: `auth_url` only, so the client stays on the legacy path.
+    #[test]
+    fn a_server_advertising_no_provider_maps_to_none() {
+        let environment = environment_with(None);
+        assert_eq!(environment.oidc, None);
+        assert_eq!(
+            environment
+                .endpoint
+                .and_then(|endpoint| endpoint.auth_url)
+                .as_deref(),
+            Some("ucs-auth://auth.example.com")
+        );
+    }
+
+    #[test]
+    fn a_provider_without_an_issuer_maps_to_none() {
+        let environment = environment_with(Some(proto::Oidc {
+            client_id: "lore-cli".to_string(),
+            ..Default::default()
+        }));
+        assert_eq!(environment.oidc, None);
+    }
+
+    #[test]
+    fn an_advertised_provider_maps_empty_strings_to_none() {
+        let environment = environment_with(Some(proto::Oidc {
+            issuer: "https://auth.example.com".to_string(),
+            client_id: "lore-cli".to_string(),
+            scopes: vec!["openid".to_string()],
+            preferred: true,
+            resource_template: "https://lore.example.com/partitions/{id}".to_string(),
+            scope_template: String::new(),
+            token_exchange_issuer: "https://auth.example.com".to_string(),
+            identity_claim: String::new(),
+        }));
+        assert_eq!(
+            environment.oidc,
+            Some(Oidc {
+                issuer: "https://auth.example.com".to_string(),
+                client_id: "lore-cli".to_string(),
+                scopes: vec!["openid".to_string()],
+                preferred: true,
+                resource_template: Some("https://lore.example.com/partitions/{id}".to_string()),
+                scope_template: None,
+                token_exchange_issuer: Some("https://auth.example.com".to_string()),
+                identity_claim: None,
+            })
+        );
     }
 }

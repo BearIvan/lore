@@ -70,6 +70,7 @@ use tracing::warn;
 
 use crate::auth::jwk::JwkServiceImpl;
 use crate::auth::jwt::JwtVerifier;
+use crate::auth::oidc::advertised_oidc;
 use crate::authnz::repository_authorizer::RepositoryAuthorizer;
 use crate::authnz::repository_catalog::RepositoryCatalog;
 use crate::grpc::GrpcInternalServerBuilder;
@@ -1870,7 +1871,7 @@ impl ResourceDetectorProvider for PluginResourceDetectorProvider<'_> {
 async fn async_main(settings: (Settings, StringHash), config: ServerConfig) -> Result<()> {
     // Initialize metrics and tracing telemetry, returns a guard that will cleanup when it falls out
     // of scope
-    let (settings, settings_hash) = settings;
+    let (mut settings, settings_hash) = settings;
     let runtime = runtime();
     let telemetry = settings.telemetry.clone().unwrap_or_default();
     let metrics_config = telemetry.metrics.clone().unwrap_or_default();
@@ -2058,6 +2059,16 @@ async fn async_main(settings: (Settings, StringHash), config: ServerConfig) -> R
         }
         None => None,
     };
+
+    if let Some(auth) = settings.server.auth.as_ref() {
+        let auth_url = settings
+            .environment
+            .as_ref()
+            .and_then(|environment| environment.endpoint.as_ref())
+            .and_then(|endpoint| endpoint.auth_url.as_deref());
+        let oidc = advertised_oidc(auth, auth_url).await?;
+        settings.environment.get_or_insert_default().oidc = oidc;
+    }
 
     // One shared authorizer, selected by the configuration (D8's four-way
     // flowchart), threaded into the gRPC, QUIC and HTTP servers.

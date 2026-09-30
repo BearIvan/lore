@@ -376,6 +376,7 @@ When `[server.auth]` is present, `jwt_issuer` and `jwt_audience` are both mandat
 | `jwt_audience` | required | Array of accepted JWT `aud` values. A token's audience must match one entry. |
 | `jwt_typ` | none | Accepted JWT `typ` header values, as a string or an array. When set, a token whose header carries no `typ`, or a `typ` that doesn't match any of the entries, is rejected. If unset, the token value is not checked. `jwt_typ = "at+jwt"` is the RFC 9068 access-token profile for OAuth2/OIDC deployments, and should be used for OIDC-compliant setups. Values compare as media types: case-insensitively, and with or without the `application/` prefix, so `at+jwt` also accepts `application/at+jwt`. |
 | `jwk` | none | The optional `[server.auth.jwk]` override sub-table below. |
+| `oidc` | none | The optional `[server.auth.oidc]` sub-table below, which configures the OIDC provider info shown to clients. |
 | `permission_claim` | none | Dotted path of the JWT claim carrying the caller's allowed actions, e.g. `realm_access.roles` (Keycloak) or `groups` (Dex). When using `GlobalGrantsAuthorizer` (Tier 1), this JWT claim defines where the user's global permissions are read from. When `resource_claim` is set and `ResourceGrantsAuthorizer` (Tier 2) is in use, it instead names the field inside each resource entry holding the per-partition actions, defaulting to `permission`. |
 | `resource_claim` | none | Dotted path of the JWT claim carrying per-repository resource grants. If this is set, enables the granular `ResourceGrantsAuthorizer` (Tier 2) authorizer. |
 | `resource_id_claim` | `resource_id` | The field inside each resource entry that names the resource, for providers whose entry shape cannot be changed. Keycloak's UMA `authorization.permissions` entries carry the resource name in `rsname`, for example: set `resource_claim = "authorization.permissions"`, `resource_id_claim = "rsname"` and `permission_claim = "scopes"` to read them. Tier 2 only. |
@@ -399,6 +400,33 @@ When `[server.auth]` is present, `jwt_issuer` and `jwt_audience` are both mandat
 [server.auth]
 jwt_issuer = "https://accounts.example.com"
 jwt_audience = ["lore-service"]
+```
+
+`[server.auth.oidc]`:
+
+When this table is present, the environment service advertises an OIDC provider to clients. `GlobalGrantsAuthorizer` (Tier 1) and `ResourceGrantsAuthorizer` (Tier 2) require it, since without `[environment.endpoint] auth_url` clients have no other way to log in. If `auth_url` is set, it is optional, and advertises the OIDC path next to the auth service during a migration. The advertised OIDC issuer is the first `jwt_issuer` entry, which must be an issuer URL.
+
+| Field | Default | Description |
+| --- | --- | --- |
+| `client_id` | required | The public client ID clients present to the provider. |
+| `scopes` | `[]` | Default scopes clients request at login. Empty leaves the choice to the client. |
+| `preferred` | `false` | Whether a client should use OIDC auth rather than at `auth_url`, if both are configured. Used during migration to route clients to the old auth by default, while allowing testing of the new OIDC auth. |
+| `token_exchange_issuer` | `jwt_issuer` | The issuer of the RFC 8693 token-exchange endpoint that mints partition-scoped tokens. Defaults to the advertised issuer. Set it only when a separate token service does the partition scoped token exchange. Tier 2. |
+| `resource_template` | none | Template string for mapping a partition to an RFC 8707 resource, for example `https://lore.example.com/partitions/{id}`. `{id}` is replaced by the partition ID. Tier 2. |
+| `scope_template` | none | Template string for mapping a partition to a scope value, for example `partition:{id}`. For OIDC providers that use scope for token exchange, not `resource`. Tier 2. |
+
+`ResourceGrantsAuthorizer` (Tier 2, `resource_claim` set) requires one of `resource_template` and `scope_template`. The templates are mutually exclusive.
+
+```toml
+[server.auth]
+jwt_issuer = "https://accounts.example.com"
+jwt_audience = ["lore-service"]
+resource_claim = "resources"
+
+[server.auth.oidc]
+client_id = "lore-cli"
+scopes = ["openid", "offline_access"]
+resource_template = "https://lore.example.com/partitions/{id}"
 ```
 
 ## Store settings

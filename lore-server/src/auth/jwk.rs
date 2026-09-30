@@ -313,12 +313,67 @@ enum EndpointSource {
     Discovered,
 }
 
-/// The two fields this server needs from an OIDC discovery document
+/// The fields this server reads from an OIDC discovery document
 /// (RFC 8414 / `OpenID` Connect Discovery §3).
 #[derive(Deserialize)]
-struct DiscoveryDocument {
-    issuer: String,
-    jwks_uri: String,
+pub struct DiscoveryDocument {
+    pub issuer: String,
+    pub jwks_uri: String,
+}
+
+/// Fetch `<issuer>/.well-known/openid-configuration`. Redirects are refused, the
+/// body is capped, and a document naming any issuer other than `issuer` is rejected.
+pub async fn fetch_discovery_document(issuer: &str) -> Result<DiscoveryDocument, JWKServiceError> {
+    let url = format!(
+        "{}/.well-known/openid-configuration",
+        issuer.trim_end_matches('/')
+    );
+    let client = no_redirect_client()?;
+    let mut response = client.get(&url).send().await.map_err(|e| {
+        warn!("failed to fetch OIDC discovery document: {e:?}");
+        JWKServiceError::InternalError
+    })?;
+
+    let status = response.status();
+    let body = read_capped_body("OIDC discovery", &mut response).await?;
+    if status.is_redirection() {
+        warn!(
+            status = %status.as_u16(),
+            "OIDC discovery endpoint answered with a redirect."
+        );
+        return Err(JWKServiceError::InternalError);
+    }
+    if !status.is_success() {
+        warn!(
+            status = %status.as_u16(),
+            "OIDC discovery endpoint returned error, response: {}",
+            body_excerpt(&body)
+        );
+        return Err(JWKServiceError::InternalError);
+    }
+
+    let document: DiscoveryDocument = serde_json::from_str(&body).map_err(|e| {
+        warn!(
+            "failed to parse OIDC discovery document: {}",
+            body_excerpt(&body)
+        );
+        JWKServiceError::ParseError(e)
+    })?;
+
+    // Check that document issuer matches the issuer URL, to avoid redirect
+    // attacks.
+    if document.issuer != issuer {
+        warn!(
+            expected = %issuer,
+            actual = %document.issuer,
+            "OIDC discovery document names a different issuer than jwt_issuer"
+        );
+        return Err(JWKServiceError::DiscoveryIssuerMismatch {
+            expected: issuer.to_string(),
+            actual: document.issuer,
+        });
+    }
+    Ok(document)
 }
 
 /// Whether a discovered `jwks_uri` may be fetched from.
@@ -423,55 +478,7 @@ impl JwkServiceImpl {
             return Ok((cached.clone(), EndpointSource::Discovered));
         }
 
-        let url = format!(
-            "{}/.well-known/openid-configuration",
-            issuer.trim_end_matches('/')
-        );
-        let client = no_redirect_client()?;
-        let mut response = client.get(&url).send().await.map_err(|e| {
-            warn!("failed to fetch OIDC discovery document: {e:?}");
-            JWKServiceError::InternalError
-        })?;
-
-        let status = response.status();
-        let body = read_capped_body("OIDC discovery", &mut response).await?;
-        if status.is_redirection() {
-            warn!(
-                status = %status.as_u16(),
-                "OIDC discovery endpoint answered with a redirect."
-            );
-            return Err(JWKServiceError::InternalError);
-        }
-        if !status.is_success() {
-            warn!(
-                status = %status.as_u16(),
-                "OIDC discovery endpoint returned error, response: {}",
-                body_excerpt(&body)
-            );
-            return Err(JWKServiceError::InternalError);
-        }
-
-        let document: DiscoveryDocument = serde_json::from_str(&body).map_err(|e| {
-            warn!(
-                "failed to parse OIDC discovery document: {}",
-                body_excerpt(&body)
-            );
-            JWKServiceError::ParseError(e)
-        })?;
-
-        // The document vouching for itself is what stops a hijacked or substituted
-        // document from pointing key fetches somewhere else.
-        if document.issuer != *issuer {
-            warn!(
-                expected = %issuer,
-                actual = %document.issuer,
-                "OIDC discovery document names a different issuer than jwt_issuer"
-            );
-            return Err(JWKServiceError::DiscoveryIssuerMismatch {
-                expected: issuer.clone(),
-                actual: document.issuer,
-            });
-        }
+        let document = fetch_discovery_document(issuer).await?;
 
         if !discovered_jwks_uri_scheme_permitted(issuer, &document.jwks_uri) {
             warn!(
