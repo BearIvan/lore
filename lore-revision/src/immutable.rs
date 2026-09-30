@@ -819,7 +819,6 @@ impl<T> ReadFromImmutable<T> for T where
 {
 }
 
-#[async_trait]
 pub trait ReadBoxFromImmutable<SelfType = Self>
 where
     SelfType: zerocopy::IntoBytes
@@ -828,36 +827,42 @@ where
         + crate::lore::ZeroHeapAlloc
         + std::marker::Send,
 {
-    async fn read_box_from_immutable(
+    /// Reads the value stored at `address` into a zeroed heap allocation.
+    ///
+    /// The future is not boxed, and is as large as the read.
+    fn read_box_from_immutable(
         repository: Arc<RepositoryContext>,
         address: Address,
         cache: bool,
-    ) -> Result<lore_base::allocator::HeapBox<SelfType>, ImmutableError> {
-        let mut elem = SelfType::new_from_heap_zeroed();
-        let slice = unsafe {
-            std::slice::from_raw_parts_mut(
-                elem.as_mut_bytes().as_mut_ptr(),
-                std::mem::size_of::<SelfType>(),
+    ) -> impl Future<Output = Result<lore_base::allocator::HeapBox<SelfType>, ImmutableError>> + Send
+    {
+        async move {
+            let mut elem = SelfType::new_from_heap_zeroed();
+            let slice = unsafe {
+                std::slice::from_raw_parts_mut(
+                    elem.as_mut_bytes().as_mut_ptr(),
+                    std::mem::size_of::<SelfType>(),
+                )
+            };
+            // Target type size bounds the legal content size. Anything larger is
+            // a corrupt or hostile fragment and is rejected before any defragment
+            // buffer is allocated.
+            let options = read_options_from_repository(&repository)
+                .optional_cache(cache)
+                .with_priority()
+                .with_max_content_size(std::mem::size_of::<SelfType>() as u64);
+
+            read_into(
+                repository, address, None, /* Read full object */
+                slice, options,
             )
-        };
-        // Target type size bounds the legal content size. Anything larger is
-        // a corrupt or hostile fragment and is rejected before any defragment
-        // buffer is allocated.
-        let options = read_options_from_repository(&repository)
-            .optional_cache(cache)
-            .with_priority()
-            .with_max_content_size(std::mem::size_of::<SelfType>() as u64);
+            .await
+            .inspect_err(|_err| {
+                elem.zero();
+            })?;
 
-        read_into(
-            repository, address, None, /* Read full object */
-            slice, options,
-        )
-        .await
-        .inspect_err(|_err| {
-            elem.zero();
-        })?;
-
-        Ok(elem)
+            Ok(elem)
+        }
     }
 }
 

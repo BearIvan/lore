@@ -2490,6 +2490,7 @@ mod block_single_flight {
     use lore_revision::interface::ExecutionContext;
     use lore_revision::nametable::NameTable;
     use lore_revision::node::Node;
+    use lore_revision::node::NodeBlock;
     use lore_revision::node::NodeFileMetadata;
     use lore_revision::node::NodeFileMetadataBlock;
     use lore_revision::node::ROOT_NODE;
@@ -2982,6 +2983,34 @@ mod block_single_flight {
                     "a name table lookup holds {} bytes, its read {}",
                     size_of_val(&name_table),
                     size_of_val(&name_table_read)
+                );
+            })
+            .await;
+    }
+
+    /// A node block read holds its read of the current format, and the fallback to the older
+    /// formats, which holds a read as large and the conversion, stays in a box of its own.
+    #[tokio::test]
+    async fn a_node_block_read_keeps_the_older_formats_out_of_its_future() {
+        LORE_CONTEXT
+            .scope(setup_test_execution(), async {
+                let (immutable_store, mutable_store, _execution) =
+                    test_store_create().await.expect("Failed to create stores");
+                let repository = Arc::new(RepositoryContext::new_null_context(
+                    immutable_store,
+                    mutable_store,
+                ));
+                let state = State::new();
+
+                let read = NodeBlock::deserialize(repository.clone(), &state, Address::default());
+                let fallback =
+                    NodeBlock::deserialize_other_version(repository, &state, Address::default());
+
+                assert!(
+                    size_of_val(&read) < size_of_val(&fallback),
+                    "a node block read holds {} bytes, the older formats' fallback {}",
+                    size_of_val(&read),
+                    size_of_val(&fallback)
                 );
             })
             .await;

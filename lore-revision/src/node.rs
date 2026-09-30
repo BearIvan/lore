@@ -1411,6 +1411,9 @@ impl NodeBlock {
         lock.node_name_repack();
     }
 
+    /// Reads the node block at `address`, falling back to the older block formats when it does not
+    /// read as the current one. The fallback is boxed, as only older repositories and failed reads
+    /// take it.
     pub async fn deserialize(
         repository: Arc<RepositoryContext>,
         state: &State,
@@ -1429,7 +1432,7 @@ impl NodeBlock {
             block_data.flags &= !NodeBlockFlags::DeferRepackNametable;
             Ok(NodeBlock::new(block_data))
         } else {
-            Self::deserialize_other_version(repository, state, address).await
+            Box::pin(Self::deserialize_other_version(repository, state, address)).await
         }
     }
 
