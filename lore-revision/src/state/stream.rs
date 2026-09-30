@@ -140,8 +140,8 @@ impl<Summary: Default + Send + 'static> ChangeStream<Summary> {
     /// Either way the walk has unwound when this answers, so what it captured is released before
     /// the caller acts on the answer.
     pub async fn any(mut self, wanted: impl Fn(&NodeChange) -> bool) -> Result<bool, StateError> {
-        while let Some(change) = self.next().await {
-            if wanted(&change) {
+        while let Some(found) = self.next().await.map(|change| wanted(&change)) {
+            if found {
                 self.abandon().await;
                 return Ok(true);
             }
@@ -307,6 +307,19 @@ mod tests {
                 );
             })
             .await;
+    }
+
+    /// `any` reduces each change to its verdict as it arrives, so it holds no change while the walk
+    /// it cut short unwinds.
+    #[test]
+    fn any_holds_no_change_while_the_walk_unwinds() {
+        let answer = ChangeStream::<()>::nothing().any(|_change| true);
+
+        assert!(
+            size_of_val(&answer) < size_of::<NodeChange>(),
+            "any holds {} bytes",
+            size_of_val(&answer)
+        );
     }
 
     /// A walk offering nothing the caller accepts is read to its end rather than cut short, so

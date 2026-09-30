@@ -1569,18 +1569,23 @@ impl State {
         repository: Arc<RepositoryContext>,
         block_index: usize,
     ) -> Option<JoinHandle<()>> {
-        let (tree, mut block_hash_bytes) = {
+        let (hash_file_metadata, block_count, mut block_hash_bytes) = {
             let lock = self.runtime.read();
             if lock.block_file_metadata.len() > block_index
                 && lock.block_file_metadata[block_index].upgrade().is_some()
             {
                 return None;
             }
-            (lock.tree?, lock.block_file_metadata_address.clone())
+            let tree = lock.tree.as_ref()?;
+            (
+                tree.hash_file_metadata,
+                tree.block_count as usize,
+                lock.block_file_metadata_address.clone(),
+            )
         };
 
         if block_index >= block_hash_bytes.count::<Hash>() {
-            if tree.hash_file_metadata.is_zero() {
+            if hash_file_metadata.is_zero() {
                 return None;
             }
 
@@ -1598,7 +1603,7 @@ impl State {
             if block_index >= block_hash_bytes.count::<Hash>() {
                 // TODO(mjansson): To support huge trees we might want to selectively
                 // read the block addresses instead of all in one big buffer
-                let address = Address::zero_context_hash(tree.hash_file_metadata);
+                let address = Address::zero_context_hash(hash_file_metadata);
                 let Ok(hash_bytes) = immutable::read(
                     repository.clone(),
                     address,
@@ -1612,9 +1617,9 @@ impl State {
                     return None;
                 };
                 block_hash_bytes = hash_bytes;
-                if block_hash_bytes.count::<Hash>() < tree.block_count as usize {
+                if block_hash_bytes.count::<Hash>() < block_count {
                     block_hash_bytes = block_hash_bytes
-                        .clone_and_resize_zeroed::<Hash>(tree.block_count as usize)
+                        .clone_and_resize_zeroed::<Hash>(block_count)
                         .freeze();
                 }
                 {
@@ -1675,8 +1680,12 @@ impl State {
             }
         }
 
-        let tree = self.tree(repository.clone()).await?;
-        if block_index >= tree.block_count as usize {
+        let Tree {
+            block_count,
+            hash_file_metadata,
+            ..
+        } = self.tree(repository.clone()).await?;
+        if block_index >= block_count as usize {
             return Err(StateError::internal(format!(
                 "Invalid block index: {block_index}"
             )));
@@ -1684,7 +1693,7 @@ impl State {
 
         // Nothing has ever been written for this tree, so no block of it can
         // hold anything.
-        if tree.hash_file_metadata.is_zero() {
+        if hash_file_metadata.is_zero() {
             return Ok(None);
         }
 
@@ -1733,8 +1742,12 @@ impl State {
         repository: Arc<RepositoryContext>,
         block_index: usize,
     ) -> Result<Arc<NodeFileMetadataBlock>, StateError> {
-        let tree = self.tree(repository.clone()).await?;
-        if block_index >= tree.block_count as usize {
+        let Tree {
+            block_count,
+            hash_file_metadata,
+            ..
+        } = self.tree(repository.clone()).await?;
+        if block_index >= block_count as usize {
             return Err(StateError::internal(format!(
                 "Invalid block index: {block_index}"
             )));
@@ -1760,7 +1773,7 @@ impl State {
             let mut lock = self.runtime.write();
             if block_index >= lock.block_file_metadata.len() {
                 lock.block_file_metadata
-                    .resize(tree.block_count as usize, Weak::default());
+                    .resize(block_count as usize, Weak::default());
             }
 
             lock.block_file_metadata_address.clone()
@@ -1780,7 +1793,7 @@ impl State {
             };
 
             if block_index >= block_hash_bytes.count::<Hash>() {
-                if tree.hash_file_metadata.is_zero() {
+                if hash_file_metadata.is_zero() {
                     let block = Arc::new(NodeFileMetadataBlock::default());
                     {
                         let mut lock = self.runtime.write();
@@ -1794,7 +1807,7 @@ impl State {
 
                 // TODO(mjansson): To support huge trees we might want to selectively
                 // read the block addresses instead of all in one big buffer
-                let address = Address::zero_context_hash(tree.hash_file_metadata);
+                let address = Address::zero_context_hash(hash_file_metadata);
                 block_hash_bytes = immutable::read(
                     repository.clone(),
                     address,
@@ -1805,9 +1818,9 @@ impl State {
                 )
                 .await
                 .forward::<StateError>("Failed to deserialize node block list")?;
-                if block_hash_bytes.count::<Hash>() < tree.block_count as usize {
+                if block_hash_bytes.count::<Hash>() < block_count as usize {
                     block_hash_bytes = block_hash_bytes
-                        .clone_and_resize_zeroed::<Hash>(tree.block_count as usize)
+                        .clone_and_resize_zeroed::<Hash>(block_count as usize)
                         .freeze();
                 }
                 {
@@ -4394,11 +4407,14 @@ impl State {
             .await
             .internal("Failed to deserialize name table")?;
 
-        let tree = self.tree(repository.clone()).await?;
+        let hash_nametable = self
+            .tree(repository.clone())
+            .await?
+            .hash_nametable_deprecated;
 
         let name_table = {
-            Arc::new(if !tree.hash_nametable_deprecated.is_zero() {
-                NameTable::deserialize(repository, tree.hash_nametable_deprecated)
+            Arc::new(if !hash_nametable.is_zero() {
+                NameTable::deserialize(repository, hash_nametable)
                     .await
                     .forward::<StateError>("Failed to deserialize name table")?
             } else {
@@ -7360,9 +7376,9 @@ async fn collect_node_blocks(
 ) -> Result<Vec<Address>, StateError> {
     let mut addresses = Vec::with_capacity(32);
 
-    let tree = state.tree(repository.clone()).await?;
-    if !tree.hash_node.is_zero() {
-        let block_address = Address::zero_context_hash(tree.hash_node);
+    let hash_node = state.tree(repository.clone()).await?.hash_node;
+    if !hash_node.is_zero() {
+        let block_address = Address::zero_context_hash(hash_node);
         let buffer = immutable::read(
             repository.clone(),
             block_address,
@@ -7390,9 +7406,9 @@ async fn collect_file_metadata_blocks(
 ) -> Result<Vec<Address>, StateError> {
     let mut addresses = Vec::with_capacity(32);
 
-    let tree = state.tree(repository.clone()).await?;
-    if !tree.hash_file_metadata.is_zero() {
-        let block_address = Address::zero_context_hash(tree.hash_file_metadata);
+    let hash_file_metadata = state.tree(repository.clone()).await?.hash_file_metadata;
+    if !hash_file_metadata.is_zero() {
+        let block_address = Address::zero_context_hash(hash_file_metadata);
         let buffer = immutable::read(
             repository.clone(),
             block_address,
@@ -10174,6 +10190,41 @@ mod tests {
             expected,
             "every one of the {DEPTH} levels is emitted, and the leaf below them"
         );
+    }
+
+    /// A file metadata block's prefetch and load, and the deprecated name table's load, keep the
+    /// fields of the tree they read rather than the tree, so none holds a tree across its read.
+    #[tokio::test]
+    async fn tree_readers_hold_its_fields_not_the_tree() {
+        LORE_CONTEXT
+            .scope(setup_test_execution(), async {
+                let repository = null_repository().await;
+                let state = State::new();
+                let options = immutable::read_options_from_repository(&repository);
+
+                let list_read =
+                    immutable::read(repository.clone(), Address::default(), None, options);
+                let name_table_read = NameTable::deserialize(repository.clone(), Hash::default());
+                let prefetch = state.block_file_metadata_cache(repository.clone(), 0);
+                let load = state.block_file_metadata_load(repository.clone(), 0);
+                let name_table = state.nametable_load(repository);
+
+                for (what, future, read) in [
+                    ("prefetch", size_of_val(&prefetch), size_of_val(&list_read)),
+                    ("load", size_of_val(&load), size_of_val(&list_read)),
+                    (
+                        "name table load",
+                        size_of_val(&name_table),
+                        size_of_val(&name_table_read),
+                    ),
+                ] {
+                    assert!(
+                        future < read + size_of::<Tree>(),
+                        "the {what} holds {future} bytes over a read of {read}"
+                    );
+                }
+            })
+            .await;
     }
 }
 

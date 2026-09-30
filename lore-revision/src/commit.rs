@@ -1625,23 +1625,23 @@ async fn commit_staged_revision(
 
         state_staged.set_metadata_hash(metadata_hash);
 
-        let tree_staged = state_staged
+        let root_staged = state_staged
             .tree(repository.clone())
             .await
-            .forward::<CommitError>("Failed to read revision tree data")?;
-        let tree_current = state_current
+            .forward::<CommitError>("Failed to read revision tree data")?
+            .hash_root;
+        let root_current = state_current
             .tree(repository.clone())
             .await
-            .forward::<CommitError>("Failed to read revision tree data")?;
-        if !state_staged.is_merge_or_cherry_pick_or_revert()
-            && tree_staged.hash_root == tree_current.hash_root
-        {
+            .forward::<CommitError>("Failed to read revision tree data")?
+            .hash_root;
+        if !state_staged.is_merge_or_cherry_pick_or_revert() && root_staged == root_current {
             if !globals.force() {
                 lore_debug!(
                     "Staged tree {} in revision {} is identical to current tree {} in revision {}",
-                    tree_staged.hash_root,
+                    root_staged,
                     state_staged.revision(),
-                    tree_current.hash_root,
+                    root_current,
                     state_current.revision(),
                 );
                 return Err(NothingStaged.into());

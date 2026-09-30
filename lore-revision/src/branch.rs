@@ -2650,46 +2650,12 @@ pub async fn diff3_with_source_cap(
         target: target_revision,
     };
 
-    relay_revision_diff3(
+    let (inner_tx, inner_rx) = mpsc::channel::<Result<DiffItem, StateError>>(256);
+    let driver = std::pin::pin!(revision::diff3_with_source_cap(
         repository,
-        summary,
-        path,
-        include_same,
-        auto_resolve,
-        source_cap,
-        history_walk_concurrency,
-        graft_view,
-        &tx,
-    )
-    .await?;
-
-    Ok(summary)
-}
-
-/// Drives `revision::diff3` from the resolved base and relays its items through
-/// [`emit_diff_item_with_auto_resolve`].
-///
-/// A function of its own because its stream and items live across several
-/// awaits: kept in [`diff3_with_source_cap`] they would take space in its
-/// future while the base is resolved as well.
-#[allow(clippy::too_many_arguments)]
-async fn relay_revision_diff3(
-    repository: Arc<RepositoryContext>,
-    summary: Diff3Summary,
-    path: Option<RelativePath>,
-    include_same: bool,
-    auto_resolve: bool,
-    source_cap: Option<usize>,
-    history_walk_concurrency: Option<usize>,
-    graft_view: Option<Arc<crate::filter::Filter>>,
-    tx: &mpsc::Sender<Result<DiffItem, BranchError>>,
-) -> Result<(), BranchError> {
-    let (inner_tx, mut inner_rx) = mpsc::channel::<Result<DiffItem, StateError>>(256);
-    let mut driver = std::pin::pin!(revision::diff3_with_source_cap(
-        repository,
-        summary.base,
-        summary.source,
-        summary.target,
+        base_revision,
+        source_revision,
+        target_revision,
         path,
         include_same,
         source_cap,
@@ -2697,25 +2663,47 @@ async fn relay_revision_diff3(
         graft_view,
         inner_tx,
     ));
+    relay_revision_diff3(driver, inner_rx, auto_resolve, &tx).await?;
+
+    Ok(summary)
+}
+
+/// Relays the items of the three-way diff `driver` makes through
+/// [`emit_diff_item_with_auto_resolve`].
+///
+/// A function of its own because its items live across several awaits: kept in
+/// [`diff3_with_source_cap`] they would take space in its future while the base
+/// is resolved as well. The caller pins the diff, which takes the caller's
+/// arguments rather than a copy of them. Each item is relayed after the
+/// `select!` that received it, and a diff that outlives the channel is awaited
+/// after the loop, so no item is held twice.
+async fn relay_revision_diff3(
+    mut driver: Pin<&mut impl Future<Output = Result<Diff3Summary, StateError>>>,
+    mut inner_rx: mpsc::Receiver<Result<DiffItem, StateError>>,
+    auto_resolve: bool,
+    tx: &mpsc::Sender<Result<DiffItem, BranchError>>,
+) -> Result<(), BranchError> {
+    let mut driven = false;
     loop {
-        tokio::select! {
+        let item = tokio::select! {
             biased;
-            item = inner_rx.recv() => if let Some(item) = item {
-                let item = item.forward::<BranchError>("Failed to calculate branch diff")?;
-                emit_diff_item_with_auto_resolve(item, auto_resolve, tx).await?;
-            } else {
-                (&mut driver).await.forward::<BranchError>("Failed to calculate branch diff")?;
-                break;
+            item = inner_rx.recv() => match item {
+                Some(item) => item,
+                None => break,
             },
-            result = &mut driver => {
+            result = &mut driver, if !driven => {
                 result.forward::<BranchError>("Failed to calculate branch diff")?;
-                while let Some(item) = inner_rx.recv().await {
-                    let item = item.forward::<BranchError>("Failed to calculate branch diff")?;
-                    emit_diff_item_with_auto_resolve(item, auto_resolve, tx).await?;
-                }
-                break;
+                driven = true;
+                continue;
             }
-        }
+        };
+        let item = item.forward::<BranchError>("Failed to calculate branch diff")?;
+        emit_diff_item_with_auto_resolve(item, auto_resolve, tx).await?;
+    }
+    if !driven {
+        driver
+            .await
+            .forward::<BranchError>("Failed to calculate branch diff")?;
     }
 
     Ok(())
@@ -2729,26 +2717,29 @@ async fn relay_revision_diff3(
 ///
 /// The text merge is boxed. Only a conflict with auto-resolve on reaches it,
 /// and inline it would make the step as large as the merge for every item.
-async fn emit_diff_item_with_auto_resolve(
-    item: DiffItem,
+///
+/// Not an `async fn`, which would hold a second copy of its arguments. A
+/// resolved conflict replaces the item in place, so the item is held once.
+#[allow(clippy::manual_async_fn)]
+fn emit_diff_item_with_auto_resolve(
+    mut item: DiffItem,
     auto_resolve: bool,
     tx: &mpsc::Sender<Result<DiffItem, BranchError>>,
-) -> Result<(), BranchError> {
-    let item = match item {
-        DiffItem::Conflict(pair) if auto_resolve => {
-            match Box::pin(try_auto_resolve_conflict(&pair.0, &pair.1)).await? {
-                Some(resolved) => DiffItem::Change(resolved),
-                None => DiffItem::Conflict(pair),
-            }
+) -> impl Future<Output = Result<(), BranchError>> + '_ {
+    async move {
+        if auto_resolve
+            && let DiffItem::Conflict(pair) = &item
+            && let Some(resolved) = Box::pin(try_auto_resolve_conflict(&pair.0, &pair.1)).await?
+        {
+            item = DiffItem::Change(resolved);
         }
-        item => item,
-    };
-    let permit = tx
-        .reserve()
-        .await
-        .map_err(|_closed| Internal::msg("diff3 channel closed"))?;
-    permit.send(Ok(item));
-    Ok(())
+        let permit = tx
+            .reserve()
+            .await
+            .map_err(|_closed| Internal::msg("diff3 channel closed"))?;
+        permit.send(Ok(item));
+        Ok(())
+    }
 }
 
 /// Realises the three sides of one conflict into temp files and runs
@@ -5032,6 +5023,56 @@ mod tests {
                 "the step holds {} bytes, the merge {}",
                 size_of_val(&step),
                 size_of_val(&merge)
+            );
+        }))
+        .await;
+    }
+
+    /// A resolved conflict replaces the item in place, so the auto-resolve step holds its item
+    /// once, and the relay holds no item beside the step.
+    #[tokio::test]
+    async fn each_relayed_diff_item_is_held_once() {
+        Box::pin(with_execution(async {
+            let repository = null_repository().await;
+            let state = State::new();
+            let change = node_change(
+                &repository,
+                &state,
+                FileAction::Add,
+                NodeFlags::File,
+                "file.txt",
+                None,
+            );
+            let (tx, _rx) = mpsc::channel(1);
+            let (inner_tx, inner_rx) = mpsc::channel(1);
+            let hash = Hash::default();
+
+            let step = emit_diff_item_with_auto_resolve(DiffItem::Change(change), true, &tx);
+            let driver = std::pin::pin!(revision::diff3_with_source_cap(
+                repository.clone(),
+                hash,
+                hash,
+                hash,
+                None,
+                false,
+                None,
+                None,
+                None,
+                inner_tx,
+            ));
+            let relay = relay_revision_diff3(driver, inner_rx, true, &tx);
+
+            assert!(
+                size_of_val(&step) < 2 * size_of::<DiffItem>(),
+                "the step holds {} bytes for an item of {}",
+                size_of_val(&step),
+                size_of::<DiffItem>()
+            );
+            assert!(
+                size_of_val(&relay) < size_of_val(&step) + size_of::<DiffItem>(),
+                "the relay holds {} bytes, its step {}",
+                size_of_val(&relay),
+                size_of_val(&step)
             );
         }))
         .await;

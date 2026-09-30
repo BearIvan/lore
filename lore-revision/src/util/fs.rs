@@ -511,104 +511,108 @@ pub fn filesystem_path_fork<'a>(
     Box::pin(async move { filesystem_path(operation, &base, &find_path, None).await })
 }
 
+/// Removes the file or empty directory at `absolute_path`, retrying once after clearing its
+/// read-only flag, and answers `Ok` for a path that does not exist or whose metadata cannot be
+/// read.
 pub async fn unlink<P: AsRef<Path>>(absolute_path: P) -> tokio::io::Result<()> {
     let absolute_path = absolute_path.as_ref();
     lore_trace!("Deleting {}", absolute_path.display());
-    let metadata = lore_io::IoDriver::global().metadata(absolute_path).await;
-
-    if let Ok(metadata) = metadata {
-        if metadata.is_dir() {
-            if let Err(err) = lore_io::IoDriver::global().remove_dir(absolute_path).await {
-                if err.kind() == tokio::io::ErrorKind::NotFound {
-                    lore_trace!(
-                        "Path does not exist anymore after removing recursively {}: {}",
-                        absolute_path.display(),
-                        err
-                    );
-                    return Ok(());
-                }
+    let (is_dir, mut permissions) = match lore_io::IoDriver::global().metadata(absolute_path).await
+    {
+        Ok(metadata) => (metadata.is_dir(), metadata.permissions()),
+        Err(err) => {
+            if err.kind() == tokio::io::ErrorKind::NotFound {
+                lore_trace!(
+                    "Path does not exist anymore after metadata query: {}",
+                    absolute_path.display()
+                );
+            } else {
                 lore_debug!(
-                    "Error deleting directory {}: {} - retry after setting write permission",
+                    "Delete metadata query failed for {}: {}",
                     absolute_path.display(),
                     err
                 );
-
-                let mut permissions = metadata.permissions();
-                #[allow(clippy::permissions_set_readonly_false)]
-                permissions.set_readonly(false);
-                let _ = lore_io::IoDriver::global()
-                    .set_permissions(absolute_path, permissions)
-                    .await;
-                if let Err(err) = lore_io::IoDriver::global().remove_dir(absolute_path).await {
-                    if err.kind() == tokio::io::ErrorKind::NotFound {
-                        lore_trace!(
-                            "Path does not exist anymore after trying remove recursively with write permissions: {}",
-                            absolute_path.display()
-                        );
-                        return Ok(());
-                    } else {
-                        lore_debug!(
-                            "Error deleting directory with write permissions {}: {}",
-                            absolute_path.display(),
-                            err
-                        );
-                    }
-                    return Err(err);
-                }
             }
-        } else {
-            if let Err(err) = lore_io::IoDriver::global().remove_file(absolute_path).await {
-                if err.kind() == tokio::io::ErrorKind::NotFound {
-                    lore_trace!(
-                        "Path does not exist anymore after removing file with write permissions: {}",
-                        absolute_path.display()
-                    );
-                    return Ok(());
-                }
-                lore_debug!(
-                    "Error deleting file {}: {} - retry after setting write permission",
-                    absolute_path.display(),
-                    err
-                );
-
-                let mut permissions = metadata.permissions();
-                #[allow(clippy::permissions_set_readonly_false)]
-                permissions.set_readonly(false);
-                let _ = lore_io::IoDriver::global()
-                    .set_permissions(absolute_path, permissions)
-                    .await;
-                if let Err(err) = lore_io::IoDriver::global().remove_file(absolute_path).await {
-                    if err.kind() == tokio::io::ErrorKind::NotFound {
-                        lore_trace!(
-                            "Path does not exist anymore after trying remove file with write permissions: {}",
-                            absolute_path.display()
-                        );
-                        return Ok(());
-                    } else {
-                        lore_debug!(
-                            "Error deleting file with write permissions {}: {}",
-                            absolute_path.display(),
-                            err
-                        );
-                    }
-                    return Err(err);
-                }
-            }
-            lore_trace!("Deleted file {}", absolute_path.display(),);
+            return Ok(());
         }
-    } else if let Some(err) = metadata.err() {
-        if err.kind() == tokio::io::ErrorKind::NotFound {
-            lore_trace!(
-                "Path does not exist anymore after metadata query: {}",
-                absolute_path.display()
-            );
-        } else {
+    };
+
+    if is_dir {
+        if let Err(err) = lore_io::IoDriver::global().remove_dir(absolute_path).await {
+            if err.kind() == tokio::io::ErrorKind::NotFound {
+                lore_trace!(
+                    "Path does not exist anymore after removing recursively {}: {}",
+                    absolute_path.display(),
+                    err
+                );
+                return Ok(());
+            }
             lore_debug!(
-                "Delete metadata query failed for {}: {}",
+                "Error deleting directory {}: {} - retry after setting write permission",
                 absolute_path.display(),
                 err
             );
+
+            #[allow(clippy::permissions_set_readonly_false)]
+            permissions.set_readonly(false);
+            let _ = lore_io::IoDriver::global()
+                .set_permissions(absolute_path, permissions)
+                .await;
+            if let Err(err) = lore_io::IoDriver::global().remove_dir(absolute_path).await {
+                if err.kind() == tokio::io::ErrorKind::NotFound {
+                    lore_trace!(
+                        "Path does not exist anymore after trying remove recursively with write permissions: {}",
+                        absolute_path.display()
+                    );
+                    return Ok(());
+                } else {
+                    lore_debug!(
+                        "Error deleting directory with write permissions {}: {}",
+                        absolute_path.display(),
+                        err
+                    );
+                }
+                return Err(err);
+            }
         }
+    } else {
+        if let Err(err) = lore_io::IoDriver::global().remove_file(absolute_path).await {
+            if err.kind() == tokio::io::ErrorKind::NotFound {
+                lore_trace!(
+                    "Path does not exist anymore after removing file with write permissions: {}",
+                    absolute_path.display()
+                );
+                return Ok(());
+            }
+            lore_debug!(
+                "Error deleting file {}: {} - retry after setting write permission",
+                absolute_path.display(),
+                err
+            );
+
+            #[allow(clippy::permissions_set_readonly_false)]
+            permissions.set_readonly(false);
+            let _ = lore_io::IoDriver::global()
+                .set_permissions(absolute_path, permissions)
+                .await;
+            if let Err(err) = lore_io::IoDriver::global().remove_file(absolute_path).await {
+                if err.kind() == tokio::io::ErrorKind::NotFound {
+                    lore_trace!(
+                        "Path does not exist anymore after trying remove file with write permissions: {}",
+                        absolute_path.display()
+                    );
+                    return Ok(());
+                } else {
+                    lore_debug!(
+                        "Error deleting file with write permissions {}: {}",
+                        absolute_path.display(),
+                        err
+                    );
+                }
+                return Err(err);
+            }
+        }
+        lore_trace!("Deleted file {}", absolute_path.display(),);
     }
 
     Ok(())
@@ -1189,5 +1193,22 @@ mod tests {
     fn only_a_file_carries_a_mode() {
         assert_eq!(0, mode_from_observed(false, Some(true), EXEC));
         assert_eq!(0, mode_from_observed(false, None, EXEC));
+    }
+
+    /// An unlink keeps what it reads of the path's metadata, not the metadata, across the
+    /// removal it awaits.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn an_unlink_holds_no_metadata() {
+        let path = Path::new("unlinked");
+        let query = lore_io::IoDriver::global().metadata(path);
+        let removal = unlink(path);
+
+        assert!(
+            size_of_val(&removal) < size_of_val(&query) + size_of::<Metadata>(),
+            "an unlink holds {} bytes, a metadata query {}",
+            size_of_val(&removal),
+            size_of_val(&query)
+        );
     }
 }

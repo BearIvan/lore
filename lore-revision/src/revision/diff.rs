@@ -192,10 +192,9 @@ pub(crate) async fn diff(
 /// Sends a `RevisionDiffFile` event for each change, reading from each side's node whether it is
 /// a file.
 ///
-/// Its own future: inline, the change it holds across the node reads would be reserved in every
-/// state of [`diff()`], the link pin diff among them.
+/// Reads the changes by reference, so it holds no change across the node reads.
 async fn send_file_changes(diff: Vec<NodeChange>) -> Result<(), DiffError> {
-    for change in diff {
+    for change in &diff {
         let mut old_is_file = false;
         if change.from.mapping.node != INVALID_NODE {
             old_is_file = change
@@ -224,7 +223,7 @@ async fn send_file_changes(diff: Vec<NodeChange>) -> Result<(), DiffError> {
         }
 
         event::LoreEvent::RevisionDiffFile(LoreRevisionDiffFileEventData::from_node_change(
-            &change,
+            change,
             old_is_file,
             new_is_file,
         ))
@@ -310,6 +309,18 @@ mod tests {
             "libs/shared",
             Some(&paths(&["docs", "libs"]))
         ));
+    }
+
+    /// The changes are sent by reference, so sending them holds no change beside the node reads.
+    #[test]
+    fn sending_the_changes_holds_no_change() {
+        let send = send_file_changes(Vec::new());
+
+        assert!(
+            size_of_val(&send) < size_of::<NodeChange>(),
+            "sending the changes holds {} bytes",
+            size_of_val(&send)
+        );
     }
 
     /// The changes are sent after the link pins are diffed, so the diff holds no change beside

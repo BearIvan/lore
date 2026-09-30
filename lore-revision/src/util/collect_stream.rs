@@ -17,6 +17,10 @@ use tokio::sync::mpsc;
 /// Returns `Ok((S, Vec<T>))` — the summary first, then every item the
 /// producer emitted. First error wins: a producer error or an `Err(E)`
 /// item short-circuits the drain and propagates up.
+///
+/// A producer that outlives the channel is awaited outside the `select!`, and
+/// the items left once the producer finishes are drained after the loop, so the
+/// loop holds no received item and only the drain holds the summary.
 pub async fn collect_stream_with_summary<T, S, E, Fut>(
     f: impl FnOnce(mpsc::Sender<Result<T, E>>) -> Fut,
 ) -> Result<(S, Vec<T>), E>
@@ -27,21 +31,24 @@ where
     let mut driver = pin!(f(tx));
     let mut out = Vec::new();
     let summary = loop {
-        tokio::select! {
+        let closed = tokio::select! {
             biased;
             item = rx.recv() => match item {
-                Some(item) => out.push(item?),
-                None => break (&mut driver).await?,
-            },
-            result = &mut driver => {
-                let summary = result?;
-                while let Some(item) = rx.recv().await {
+                Some(item) => {
                     out.push(item?);
+                    false
                 }
-                break summary;
-            }
+                None => true,
+            },
+            result = &mut driver => break result?,
+        };
+        if closed {
+            break (&mut driver).await?;
         }
     };
+    while let Some(item) = rx.recv().await {
+        out.push(item?);
+    }
     Ok((summary, out))
 }
 
@@ -165,6 +172,24 @@ mod tests {
         let (summary, items) = result.unwrap();
         assert_eq!(summary, "done");
         assert_eq!(items, vec![0, 1, 2, 3, 4]);
+    }
+
+    /// The drain holds no received item beside its producer, while it receives or while it awaits
+    /// a producer that outlives the channel.
+    #[test]
+    fn the_drain_holds_no_item_beside_its_producer() {
+        async fn produce(tx: mpsc::Sender<Result<[u8; 1024], ()>>) -> Result<(), ()> {
+            tx.send(Ok([0; 1024])).await.map_err(|_closed| ())
+        }
+
+        let (tx, _rx) = mpsc::channel(1);
+        let producer = size_of_val(&produce(tx));
+        let drain = size_of_val(&collect_stream_with_summary(produce));
+
+        assert!(
+            drain < producer + size_of::<[u8; 1024]>(),
+            "the drain holds {drain} bytes over a producer of {producer}"
+        );
     }
 
     #[tokio::test]

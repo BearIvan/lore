@@ -495,6 +495,9 @@ async fn file_size_from_node_change_path(
 ///
 /// Reads to the end rather than stopping at a failure: the walk marks dirty as it goes, and its
 /// marks are what a status run leaves behind whether or not every change could be reported.
+///
+/// Each change is taken by a `let`-`else` rather than a `while let`, whose scrutinee would stay
+/// reserved beside the change while it is reported.
 async fn report_scan_changes(
     operation: &InstanceOperationImpl,
     repository: &Arc<RepositoryContext>,
@@ -503,7 +506,10 @@ async fn report_scan_changes(
 ) -> (usize, Option<StatusError>) {
     let mut reported = 0;
     let mut failure = None;
-    while let Some(change) = changes.next().await {
+    loop {
+        let Some(change) = changes.next().await else {
+            break;
+        };
         reported += 1;
         if let Err(err) = report_scan_change(operation, repository, summary, &change).await {
             failure.get_or_insert(err);
@@ -1903,6 +1909,7 @@ mod tree_diff_operation_tests {
     use lore_base::runtime::LORE_CONTEXT;
 
     use super::*;
+    use crate::fs::filesystem_provider::FilesystemProvider;
     use crate::fs::filesystem_provider::tests::TestFilesystemProvider;
     use crate::fs::filesystem_provider::tests::test_store_create;
     use crate::repository::test_helpers::RepositoryContextCreationArgsExt;
@@ -2022,5 +2029,48 @@ mod tree_diff_operation_tests {
             "Checking dirty flags and scanning read separate snapshots"
         );
         assert_eq!(vec![false], finalizes);
+    }
+
+    /// Reporting the changes a scan finds holds each change once, beside the report of it.
+    #[tokio::test]
+    async fn a_scanned_change_is_held_once_while_it_is_reported() {
+        let filesystem = Arc::new(TestFilesystemProvider::new());
+        let (immutable_store, mutable_store, execution) =
+            test_store_create().await.expect("Making test stores");
+        let repository = Arc::new(RepositoryContext::new(
+            default_repository_creation_args(immutable_store, mutable_store)
+                .with_filesystem_provider(filesystem.clone()),
+        ));
+
+        LORE_CONTEXT
+            .scope(execution, async move {
+                let operation = filesystem.begin_operation().await.expect("An operation");
+                let side = crate::change::NodeChangeState {
+                    mapping: state::NodeMapping::root(repository.clone(), State::new()),
+                    observed: None,
+                    flags: crate::node::NodeFlags::NoFlags,
+                    address: Default::default(),
+                    mode: 0,
+                };
+                let change = NodeChange {
+                    action: FileAction::Keep,
+                    flags: crate::change::Flags::None,
+                    from: side.clone(),
+                    to: side,
+                };
+                let summary = StatusSummaryStats::default();
+                let mut changes = state::ChangeStream::nothing();
+
+                let report = report_scan_change(&operation, &repository, &summary, &change);
+                let reports = report_scan_changes(&operation, &repository, &summary, &mut changes);
+
+                assert!(
+                    size_of_val(&reports) < size_of_val(&report) + 2 * size_of::<NodeChange>(),
+                    "reporting the changes holds {} bytes, reporting one {}",
+                    size_of_val(&reports),
+                    size_of_val(&report)
+                );
+            })
+            .await;
     }
 }
