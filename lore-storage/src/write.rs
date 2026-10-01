@@ -12,6 +12,7 @@ use bytes::Bytes;
 use bytes::BytesMut;
 use dashmap::DashMap;
 use dashmap::Entry;
+use futures::FutureExt;
 use lore_base::types::KeyType;
 use lore_error_set::prelude::*;
 use lore_transport::StorageSession;
@@ -2071,7 +2072,7 @@ async fn hashed_under_current_chunking(
     })
 }
 
-/// The address the content of the file at `path` would be stored under.
+/// The hash of the address the content of `source` would be stored under.
 ///
 /// Addressed by the same rule that stores it, so the answer is the address the content has:
 /// [`write_from_file`] with nothing written. Content is cut and hashed either way, since an
@@ -2079,13 +2080,15 @@ async fn hashed_under_current_chunking(
 ///
 /// Whether a file still holds content already stored is [`file_matches`], which measures against
 /// the fragmentation that content was stored under rather than the one cutting it now produces.
-pub async fn hash_file(
+///
+/// Returns [`write_from_file`]'s future mapped to the hash, without a future of its own.
+pub fn hash_file(
     store: Arc<dyn ImmutableStore>,
     partition: Partition,
     source: &ContentSource<'_>,
     remote_session: Option<Arc<StorageSession>>,
-) -> Result<Hash, StorageError> {
-    Ok(write_from_file(
+) -> impl Future<Output = Result<Hash, StorageError>> {
+    write_from_file(
         store,
         partition,
         source,
@@ -2094,9 +2097,7 @@ pub async fn hash_file(
         remote_session,
         WriteContext::none(),
     )
-    .await?
-    .address
-    .hash)
+    .map(|written| written.map(|written| written.address.hash))
 }
 
 /// One read covering several consecutive chunks. Sized like the chunker's window and for
