@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Epic Games, Inc.
 // SPDX-License-Identifier: MIT
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::sync::atomic::Ordering;
 
 use lore_base::lore_spawn;
@@ -347,6 +346,7 @@ async fn resolve_shared_prefixes(
 async fn precreate_shared_ancestors<'a>(
     walk: &StageWalk,
     shared_ancestors: &'a [DepthPath],
+    discards: &Arc<stage::DiscardQueue>,
 ) -> Result<AncestorNodes<'a>, StageError> {
     let mut options = walk.options;
     options.no_children = true;
@@ -372,6 +372,7 @@ async fn precreate_shared_ancestors<'a>(
             let stats = walk.stats.clone();
             let link_tracker = walk.link_tracker.clone();
             let global_mask = walk.global_mask.clone();
+            let discards = discards.clone();
             lore_spawn!(level_tasks, async move {
                 let result = stage::stage_filesystem_path(
                     operation,
@@ -382,7 +383,7 @@ async fn precreate_shared_ancestors<'a>(
                     Some(link_tracker),
                     global_mask,
                     walk_path.prefixes,
-                    None, // Pre-create stages no children, so it reaches no boundary
+                    Some(discards),
                 )
                 .await;
                 (index, result)
@@ -418,7 +419,7 @@ async fn spawn_target_walks(
     walk: &StageWalk,
     antichain: Vec<RelativePath>,
     ancestors: &AncestorNodes<'_>,
-    discards: &Arc<Mutex<Vec<crate::node::NodeID>>>,
+    discards: &Arc<stage::DiscardQueue>,
     tasks: &mut JoinSet<Result<crate::node::NodeLink, StageError>>,
 ) -> Option<StageError> {
     let mut failure = None;
@@ -589,7 +590,9 @@ pub async fn stage(
     let mut ticker = tokio::time::interval(std::time::Duration::from_millis(500));
     let stats = Arc::new(StageStats::default());
     let link_tracker = LinkTracker::new();
-    let discards: Arc<Mutex<Vec<crate::node::NodeID>>> = Arc::new(Mutex::new(Vec::new()));
+    // Where nothing is staged yet `state` is `state_current` itself, which still answers
+    // exactly: a walk adds nodes only for entries the file system holds.
+    let discards = Arc::new(stage::DiscardQueue::new(state_current.clone()));
 
     // Every layer mount is staged by its own task, never the parent walk, so
     // masking every layer subtree on every main-repo walk is correct: an entry
@@ -641,7 +644,7 @@ pub async fn stage(
             options,
         };
 
-        let ancestors = precreate_shared_ancestors(&walk, &shared_ancestors).await?;
+        let ancestors = precreate_shared_ancestors(&walk, &shared_ancestors, &discards).await?;
 
         let mut tasks: JoinSet<Result<crate::node::NodeLink, StageError>> = JoinSet::new();
         let mut failure =
@@ -656,14 +659,11 @@ pub async fn stage(
     })
     .await?;
 
-    let queued = discards
-        .lock()
-        .map(|mut queued| std::mem::take(&mut *queued))
-        .unwrap_or_default();
+    let queued = discards.take();
     let discarded = !queued.is_empty();
     state::apply_pending_discards(state.clone(), repository.clone(), queued)
         .await
-        .forward::<StageError>("Failed to discard nested repository entries")?;
+        .forward::<StageError>("Failed to discard entries no commit holds")?;
 
     let layer_staged: Vec<_> = staged_layers
         .into_iter()
@@ -689,7 +689,16 @@ pub async fn stage(
     // current_revision purely from set_revision_number/set_parent_self
     // metadata writes, tricking commit into trying to commit an empty parent.
     let parent_mutated = main_count > 0 && (state.is_dirty() || link_tracker.has_modifications());
-    if parent_mutated {
+    if discarded && leaves_nothing_staged(&repository, &state, &link_tracker).await? {
+        // A discard can leave nothing staged or dirty, which an unstage leaves with no staged
+        // state at all.
+        if !execution_context().globals().dry_run() {
+            crate::instance::delete_staged_anchor(&repository)
+                .await
+                .forward::<StageError>("Failed to remove staged anchor")?;
+        }
+        staged_revision = current_revision;
+    } else if parent_mutated {
         // Process links that need reserialization due to downstream changes
         stage::process_link_updates(
             repository.clone(),
@@ -790,6 +799,22 @@ pub async fn stage(
     }
 
     Ok(staged_revision)
+}
+
+/// Whether `state` is left with nothing to keep a staged state for: no staged or dirty node, no
+/// link change still to be staged on its link node, and no merge, cherry-pick or revert, which is
+/// staged whatever its nodes hold.
+async fn leaves_nothing_staged(
+    repository: &Arc<RepositoryContext>,
+    state: &Arc<State>,
+    link_tracker: &LinkTracker,
+) -> Result<bool, StageError> {
+    Ok(!link_tracker.has_modifications()
+        && !state.is_merge_or_cherry_pick_or_revert()
+        && !state
+            .node_has_staged_or_dirty_children(repository.clone(), ROOT_NODE)
+            .await
+            .forward::<StageError>("Failed to read the staged root")?)
 }
 
 /// What a stage target list resolved to.

@@ -730,28 +730,9 @@ async fn dirty_path(
             .await
             .forward::<DirtyError>("Failed to discard reverted dirty add node")?;
 
-            // Clean up parent dirty flags if no dirty children remain
-            let parent_id = node.parent;
-            if parent_id.is_valid_or_root_node_id()
-                && !state_staged
-                    .node_has_dirty_children(repository.clone(), parent_id)
-                    .await
-                    .forward::<DirtyError>("Failed to check dirty children")?
-            {
-                let parent_block_index = NodeBlock::index(parent_id);
-                let parent_node_index = Node::index(parent_id);
-                let parent_block = state_staged
-                    .block(repository.clone(), parent_block_index)
-                    .await
-                    .forward::<DirtyError>("Failed to get parent block")?;
-                {
-                    let mut writer = parent_block.write();
-                    writer.node(parent_node_index).clear_dirty_flags();
-                    writer.mark_dirty();
-                }
-                state_staged.block_modified(parent_block, parent_block_index);
-                state_staged.mark_dirty();
-            }
+            crate::state::clear_propagation(state_staged, repository, node.parent)
+                .await
+                .forward::<DirtyError>("Failed to clear the marks above a reverted add")?;
 
             stats.delete_count.fetch_add(1, Ordering::Relaxed);
         } else {

@@ -7,7 +7,6 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
@@ -67,6 +66,7 @@ use crate::revision::sync::SyncRealizeStats;
 use crate::state;
 use crate::state::NodeMapping;
 use crate::state::State;
+use crate::state::StateNodeChildrenIterator;
 use crate::state::StateNodeChildrenWithNameIterator;
 use crate::state::file_modified_against_node;
 use crate::util;
@@ -323,15 +323,197 @@ pub(crate) async fn process_link_updates(
         .forward::<StageError>("Failed to update link")
 }
 
-/// Entries a walk found behind a nested-repository boundary, for
-/// [`state::apply_pending_discards`] to drop once the walk has drained.
+/// Entries a walk leaves for [`state::apply_pending_discards`] to drop once it has
+/// drained: those found behind a nested-repository boundary, and those neither the
+/// file system nor any commit holds.
 ///
 /// Collected rather than discarded where they are found: the discard rewrites the
 /// sibling chains the walk's own tasks are still reading. The ids index one state,
 /// so a walk crossing into a linked state carries `None` from there on, as does a
 /// caller that reconciles nothing against the file system: a boundary is still
-/// skipped, only an entry an earlier walk left indexed is left in place.
-pub(crate) type PendingDiscards = Option<Arc<Mutex<Vec<NodeID>>>>;
+/// skipped and an absent entry is staged as a delete, only an entry this would
+/// drop is left in place.
+pub(crate) type PendingDiscards = Option<Arc<DiscardQueue>>;
+
+/// See [`PendingDiscards`].
+pub(crate) struct DiscardQueue {
+    /// The revision the staged tree is based on, which holds every entry a
+    /// commit covers.
+    committed: Arc<State>,
+    nodes: parking_lot::Mutex<Vec<NodeID>>,
+}
+
+impl DiscardQueue {
+    /// An empty queue for a staged tree based on `committed`.
+    pub(crate) fn new(committed: Arc<State>) -> Self {
+        Self {
+            committed,
+            nodes: parking_lot::Mutex::new(Vec::new()),
+        }
+    }
+
+    fn push(&self, node: NodeID) {
+        self.nodes.lock().push(node);
+    }
+
+    /// The entries queued, leaving the queue empty.
+    pub(crate) fn take(&self) -> Vec<NodeID> {
+        std::mem::take(&mut *self.nodes.lock())
+    }
+}
+
+/// Whether the committed tree holds `node`, which the staged tree holds at `id`.
+///
+/// Decided by the node's slot rather than its name. The staged tree is derived from the
+/// committed one and never moves a node to another slot, so a committed node keeps its id
+/// however it has since been respelled, moved or staged for delete, and one of the same name
+/// staging added beside it, as a type change does, takes a slot of its own. The kind has to
+/// match as well, since a slot the staged tree freed can be reused. The file id is not
+/// compared: syncs and merges overwrite a committed file's address, its file id included.
+///
+/// A slot past the committed tree's blocks is not committed. A block within them that fails to
+/// load fails the call.
+async fn is_committed(
+    committed: &State,
+    repository: &Arc<RepositoryContext>,
+    id: NodeID,
+    node: &Node,
+) -> Result<bool, StageError> {
+    if id == ROOT_NODE {
+        return Ok(true);
+    }
+    let block_index = NodeBlock::index(id);
+    let block_count = committed
+        .tree(repository.clone())
+        .await
+        .forward::<StageError>("Failed to read the committed tree")?
+        .block_count as usize;
+    if block_index >= block_count {
+        return Ok(false);
+    }
+    let block = committed
+        .block(repository.clone(), block_index)
+        .await
+        .forward::<StageError>("Failed to read the committed node block")?;
+    let reader = block.read();
+    let index = Node::index(id);
+    Ok(reader.is_node_in_use(index) && reader.node(index).node_type() == node.node_type())
+}
+
+/// Whether `node`, which the staged tree holds at `id`, and its subtree can leave the staged tree
+/// instead of being staged for delete: none of it is committed, a link or a merge entry, which
+/// carry a registry entry and flags only a staged delete settles.
+async fn drops_cleanly(
+    committed: &State,
+    repository: &Arc<RepositoryContext>,
+    state: &Arc<State>,
+    id: NodeID,
+    node: &Node,
+) -> Result<bool, StageError> {
+    if !drops_alone(committed, repository, id, node).await? {
+        return Ok(false);
+    }
+    if !node.is_directory() {
+        return Ok(true);
+    }
+
+    let mut directories = vec![(id, *node)];
+    while let Some((directory, directory_node)) = directories.pop() {
+        let mut children = StateNodeChildrenIterator::from_parent(
+            state.clone(),
+            repository.clone(),
+            directory,
+            &directory_node,
+        )
+        .await
+        .forward::<StageError>("Failed to list the staged directory")?;
+        while let Some((child, child_node)) = children
+            .next()
+            .await
+            .forward::<StageError>("Failed to list the staged directory")?
+        {
+            if !drops_alone(committed, repository, child, &child_node).await? {
+                return Ok(false);
+            }
+            if child_node.is_directory() {
+                directories.push((child, child_node));
+            }
+        }
+    }
+    Ok(true)
+}
+
+/// Whether `node`, which the staged tree holds at `id`, drops cleanly, leaving aside what is
+/// below it.
+async fn drops_alone(
+    committed: &State,
+    repository: &Arc<RepositoryContext>,
+    id: NodeID,
+    node: &Node,
+) -> Result<bool, StageError> {
+    Ok(!node.is_link()
+        && !node.is_staged_merge()
+        && !is_committed(committed, repository, id, node).await?)
+}
+
+/// Whether the file system holds `path` in any spelling that folds to it, which is how a walk
+/// matches entries to nodes. Only a path found missing is absent: a probe that fails for another
+/// reason counts as present, so nothing is dropped on it.
+async fn is_on_disk(operation: &InstanceOperationImpl, path: &RelativePath) -> bool {
+    !matches!(
+        util::fs::filesystem_path_and_info(operation, "", path, None).await,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound
+    )
+}
+
+/// The staged node to drop for `path`, which the staged tree holds as `node`: of the nodes from
+/// `node` up to the first ancestor that is committed or on disk, the shallowest that
+/// [drops cleanly](drops_cleanly). `None` where `node` itself is committed or on disk, or where
+/// none drops cleanly, which leaves a delete to stage.
+///
+/// `path` is taken from the root of the state `node` indexes, so it crosses no link.
+async fn uncommitted_absent_root(
+    operation: &InstanceOperationImpl,
+    repository: &Arc<RepositoryContext>,
+    state: &Arc<State>,
+    committed: &State,
+    node: NodeID,
+    path: &RelativePath,
+) -> Result<Option<NodeID>, StageError> {
+    let leaf = state
+        .node(repository.clone(), node)
+        .await
+        .forward::<StageError>("Failed to resolve the staged node")?;
+    if is_committed(committed, repository, node, &leaf).await? || is_on_disk(operation, path).await
+    {
+        return Ok(None);
+    }
+
+    let mut parent = leaf.parent;
+    let mut chain = vec![(node, leaf)];
+    let mut ancestor_path = path.clone();
+    while parent != ROOT_NODE {
+        ancestor_path.pop_name();
+        let parent_node = state
+            .node(repository.clone(), parent)
+            .await
+            .forward::<StageError>("Failed to resolve the staged node")?;
+        if is_committed(committed, repository, parent, &parent_node).await?
+            || is_on_disk(operation, &ancestor_path).await
+        {
+            break;
+        }
+        chain.push((parent, parent_node));
+        parent = parent_node.parent;
+    }
+
+    for &(id, ref candidate) in chain.iter().rev() {
+        if drops_cleanly(committed, repository, state, id, candidate).await? {
+            return Ok(Some(id));
+        }
+    }
+    Ok(None)
+}
 
 /// Whether no commit covers the child the parent tree holds as `held`, which is
 /// what makes a `.lore/` inside it a nested working copy rather than parent
@@ -470,7 +652,9 @@ pub(crate) async fn stage_filesystem_path(
                 stats.clone(),
                 link_tracker.clone(),
                 layer_mask.clone(),
-                discards.clone(),
+                discards
+                    .clone()
+                    .filter(|_| descent.repository.id == repository.id),
                 descent.states,
             )
             .await;
@@ -497,6 +681,23 @@ pub(crate) async fn stage_filesystem_path(
         .find_relative_node_link(repository.clone(), base.node, remainder_path.as_str())
         .await
     {
+        if node_link.repository == repository.id
+            && let Some(queue) = discards.as_deref()
+            && let Some(root) = uncommitted_absent_root(
+                &operation,
+                &repository,
+                &state,
+                &queue.committed,
+                node_link.node,
+                &full_relative_path,
+            )
+            .await?
+        {
+            lore_debug!("Path {full_relative_path} was never committed, dropping it");
+            queue.push(root);
+            return Ok(NodeLink::default());
+        }
+
         let mut current_repository = repository.clone();
         let node_state = if node_link.repository != repository.id {
             current_repository = repository.to_link_context(node_link.repository).await;
@@ -1560,10 +1761,8 @@ pub(crate) async fn stage_directory(
                     // unclaimed pass below does not stage a delete against a base
                     // the parent never committed, and is queued for discard so
                     // the tree stops holding what the boundary excludes.
-                    if let (Some(node), Some(discards)) = (claimed, discards.as_ref())
-                        && let Ok(mut queued) = discards.lock()
-                    {
-                        queued.push(node);
+                    if let (Some(node), Some(discards)) = (claimed, discards.as_deref()) {
+                        discards.push(node);
                     }
 
                     continue;
@@ -1742,6 +1941,31 @@ pub(crate) async fn stage_directory(
         if excluded {
             lore_trace!("Node excluded by filter: {}", filter_path.as_str());
             continue;
+        }
+
+        if let Some(queue) = discards.as_deref() {
+            let dropped = match state
+                .node(repository.clone(), child)
+                .await
+                .forward::<StageError>("Failed to resolve the child node")
+            {
+                Ok(node) => {
+                    drops_cleanly(&queue.committed, &repository, &state, child, &node).await
+                }
+                Err(err) => Err(err),
+            };
+            match dropped {
+                Ok(true) => {
+                    lore_trace!("Node was never committed, dropping it: {filter_path}");
+                    queue.push(child);
+                    continue;
+                }
+                Ok(false) => {}
+                Err(err) => {
+                    failure = Some(err);
+                    break;
+                }
+            }
         }
 
         let result = stage_delete(

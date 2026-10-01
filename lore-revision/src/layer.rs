@@ -1302,18 +1302,12 @@ pub async fn store_staged_or_clear(
     layer: &Layer,
     state: &LayerState,
 ) -> Result<Hash, LayerError> {
-    let has_staged = state
+    let signature = if state
         .state_staged
-        .node_has_staged_children(state.repository.clone(), crate::node::ROOT_NODE)
+        .node_has_staged_or_dirty_children(state.repository.clone(), crate::node::ROOT_NODE)
         .await
-        .forward::<LayerError>("Failed to check staged nodes")?;
-    let has_dirty = state
-        .state_staged
-        .node_has_dirty_children(state.repository.clone(), crate::node::ROOT_NODE)
-        .await
-        .forward::<LayerError>("Failed to check dirty nodes")?;
-
-    let signature = if has_staged || has_dirty {
+        .forward::<LayerError>("Failed to check staged and dirty nodes")?
+    {
         state.state_staged.mark_dirty();
         state
             .state_staged

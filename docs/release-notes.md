@@ -56,6 +56,7 @@ Release notes for the open source Lore project. Releases before v0.8.4 predate t
 - Changes to configuring the Lore service: The service executable field can be left unset if the service was started with lore service run separately. There is no longer a fallback that attempts to use the current binary as the service binary.
 - `lore-server`: permission checks are refused with `PERMISSION_DENIED` when access is checked against the grpc auth service, rather than `INTERNAL`
 - Fix `lore push` slowing quadratically with the number of entries in a changed directory. The push and its server-side verification pair entries in a single pass over name-sorted lists
+- Fix `lore stage` staging a delete for a removed file or directory that was never committed, which `lore status` reported as `D` and, after `lore unstage`, as an untracked `A`. `lore sync` no longer refuses to run after `lore file dirty` drops such a file
 
 ## v0.10.0 (Sep 17th 2026) [#1170]
 

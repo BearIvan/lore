@@ -633,16 +633,11 @@ pub async fn reset(
     // If the staged state was modified (dirty flags cleared), persist it.
     // If no staged or dirty nodes remain, delete the anchor.
     if outer_state_staged.is_dirty() {
-        let has_staged = outer_state_staged
-            .node_has_staged_children(repository.clone(), ROOT_NODE)
+        if !outer_state_staged
+            .node_has_staged_or_dirty_children(repository.clone(), ROOT_NODE)
             .await
-            .forward::<ResetError>("Failed deserializing state node block")?;
-        let has_dirty = outer_state_staged
-            .node_has_dirty_children(repository.clone(), ROOT_NODE)
-            .await
-            .forward::<ResetError>("Failed deserializing state node block")?;
-
-        if !has_staged && !has_dirty {
+            .forward::<ResetError>("Failed deserializing state node block")?
+        {
             crate::instance::delete_staged_anchor(&repository)
                 .await
                 .forward::<ResetError>("Failed deserializing state node block")?;

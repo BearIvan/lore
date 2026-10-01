@@ -366,6 +366,15 @@ mod tests {
                     .expect("Failed to deserialize block");
                 assert!(block.node(0).child().is_some());
 
+                // Committed first: a file no commit holds has no delete to stage.
+                commit::commit_boxed(
+                    repository.clone(),
+                    &write_token,
+                    CommitOptions::new("Initial".to_string()),
+                )
+                .await
+                .expect("Failed to commit test file");
+
                 std::fs::remove_file(file_path.as_path()).expect("Failed to remove test file");
 
                 let signature = file::stage::stage(
@@ -383,7 +392,7 @@ mod tests {
                 .await
                 .expect("Failed to stage file delete");
 
-                // Load the final state and verify it has no entries
+                // Load the final state and verify the file is staged for delete
                 let state = state::State::deserialize(repository.clone(), signature)
                     .await
                     .expect("Failed to deserialize staged state");

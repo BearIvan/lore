@@ -320,15 +320,10 @@ async fn unstage_parent(
     .await?;
 
     if !clear && !is_merge_or_cherry_pick_or_revert {
-        let has_staged = state_staged
-            .node_has_staged_children(repository.clone(), ROOT_NODE)
+        clear = !state_staged
+            .node_has_staged_or_dirty_children(repository.clone(), ROOT_NODE)
             .await
             .forward::<UnstageError>("Failed to find subnode")?;
-        let has_dirty = state_staged
-            .node_has_dirty_children(repository.clone(), ROOT_NODE)
-            .await
-            .forward::<UnstageError>("Failed to find subnode")?;
-        clear = !has_staged && !has_dirty;
     };
 
     // Even if we plan to clear, check for dirty nodes — preserve anchor if dirty remain

@@ -3359,6 +3359,21 @@ impl State {
         Ok(has_dirty)
     }
 
+    /// Check if a parent node has any children with the Staged or Dirty flag set.
+    pub async fn node_has_staged_or_dirty_children(
+        &self,
+        repository: Arc<RepositoryContext>,
+        parent_node: NodeID,
+    ) -> Result<bool, StateError> {
+        for child in self.node_children(repository.clone(), parent_node).await? {
+            let node = self.node(repository.clone(), child).await?;
+            if node.is_staged() || node.is_dirty() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// Clear the dirty flags on `node_id` and propagate the clear up the parent
     /// chain: each ancestor with no remaining dirty children also has its dirty
     /// flags cleared. Staged flags are preserved (see [`Node::clear_dirty_flags`]).
@@ -6179,14 +6194,13 @@ pub async fn diff_filesystem(
     ))
 }
 
-/// Patch-discard the nodes a parallel filesystem walk collected — a
-/// reverted `DirtyAdd`, or an entry behind a nested-repository boundary — and
-/// clear stale `Dirty` propagation on each ancestor chain. A directory node goes
-/// with the whole subtree below it, so no slot is left holding an entry
-/// unreachable from the root. Must only be called after the corresponding walk's
-/// task set has drained — discarding mid-walk mutates `parent.child` / sibling
-/// chains under walks that are still reading them and races into
-/// `node_discard_patch`'s `"Discard hierarchy broken"`.
+/// Patch-discard the nodes a parallel filesystem walk collected — a reverted `DirtyAdd`, an
+/// entry behind a nested-repository boundary, or an entry neither the file system nor any commit
+/// holds — and [clear the propagation](clear_propagation) each leaves stale on its ancestor
+/// chain. A directory node goes with the whole subtree below it, so no slot is left holding an
+/// entry unreachable from the root. Must only be called after the corresponding walk's task set
+/// has drained — discarding mid-walk mutates `parent.child` / sibling chains under walks that
+/// are still reading them and races into `node_discard_patch`'s `"Discard hierarchy broken"`.
 pub(crate) async fn apply_pending_discards(
     state: Arc<State>,
     repository: Arc<RepositoryContext>,
@@ -6229,34 +6243,72 @@ pub(crate) async fn apply_pending_discards(
         .await?;
         state.mark_dirty();
 
-        let mut ancestor_node_id = initial_ancestor;
-        while ancestor_node_id.is_valid_node_id() {
-            if state
-                .node_has_dirty_children(repository.clone(), ancestor_node_id)
-                .await?
-            {
-                break;
-            }
-            let ancestor_block_index = NodeBlock::index(ancestor_node_id);
-            let ancestor_node_index = Node::index(ancestor_node_id);
-            let ancestor_block = state
-                .block(repository.clone(), ancestor_block_index)
-                .await?;
-            let next_ancestor_node_id = ancestor_block.node(ancestor_node_index).parent;
-            let block_dirtied = {
-                let mut block_writer = ancestor_block.write();
-                block_writer.node(ancestor_node_index).clear_dirty_flags();
-                block_writer.mark_dirty()
-            };
-            if block_dirtied {
-                state.block_modified(ancestor_block, ancestor_block_index);
-                state.mark_dirty();
-            }
-            if ancestor_node_id == ROOT_NODE {
-                break;
-            }
-            ancestor_node_id = next_ancestor_node_id;
+        clear_propagation(&state, &repository, initial_ancestor).await?;
+    }
+    Ok(())
+}
+
+/// Whether `node` is staged only because something below it is: the bare `Staged` bit
+/// [`State::node_mark`] carries up to the ancestors of the node it marks. An action bit can be the
+/// node's own staged action or its dirty one, so a node carrying one, a merge flag, or a link is
+/// taken to be staged in its own right.
+fn is_staged_for_descendants_only(node: &Node) -> bool {
+    node.is_staged()
+        && !node.is_link()
+        && node.flags & (NodeFlags::ActionBits.bits() | NodeFlags::MergeBits.bits()) == 0
+}
+
+/// Clear the `Dirty` and `Staged` bits that marking a node carried up to `ancestor` and the nodes
+/// above it, for a node that has since left the tree, in one walk up the chain. `Dirty` is cleared
+/// up to the first node that still has a dirty child, `Staged` up to the first that still has a
+/// staged child or is not [staged for descendants only](is_staged_for_descendants_only).
+pub(crate) async fn clear_propagation(
+    state: &Arc<State>,
+    repository: &Arc<RepositoryContext>,
+    mut ancestor: NodeID,
+) -> Result<(), StateError> {
+    let (mut dirty, mut staged) = (true, true);
+    while ancestor.is_valid_or_root_node_id() {
+        let block_index = NodeBlock::index(ancestor);
+        let node_index = Node::index(ancestor);
+        let block = state.block(repository.clone(), block_index).await?;
+        let node = block.node(node_index);
+        staged &= is_staged_for_descendants_only(&node);
+        let mut children = StateNodeChildrenIterator::from_parent(
+            state.clone(),
+            repository.clone(),
+            ancestor,
+            &node,
+        )
+        .await?;
+        while (dirty || staged)
+            && let Some((_, child)) = children.next().await?
+        {
+            dirty &= !child.is_dirty();
+            staged &= !child.is_staged();
         }
+        if !dirty && !staged {
+            break;
+        }
+        let dirtied = {
+            let mut block_writer = block.write();
+            let writer_node = block_writer.node(node_index);
+            if dirty {
+                writer_node.clear_dirty_flags();
+            }
+            if staged {
+                writer_node.clear_staged_flags();
+            }
+            block_writer.mark_dirty()
+        };
+        if dirtied {
+            state.block_modified(block, block_index);
+            state.mark_dirty();
+        }
+        if ancestor == ROOT_NODE {
+            break;
+        }
+        ancestor = node.parent;
     }
     Ok(())
 }
