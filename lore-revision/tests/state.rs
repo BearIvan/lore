@@ -237,6 +237,74 @@ mod tests {
             .expect("Task failed");
     }
 
+    /// A state that rehashes its node names rewrites its blocks unchanged. `force_rehash_names`
+    /// takes the path of a state read in a format before `LowerCaseHash`.
+    #[tokio::test]
+    async fn a_state_rehashing_its_node_names_rewrites_its_blocks_unchanged() {
+        let (_immutable_store, mutable_store, execution) =
+            test_store_create().await.expect("Failed to create stores");
+
+        #[allow(clippy::disallowed_methods)]
+        runtime()
+            .spawn(LORE_CONTEXT.scope(execution.clone(), async move {
+                let tempdir = generate_tempdir();
+                let path = tempdir.to_path_buf();
+                let immutable_store = LocalImmutableStore::new(
+                    None,
+                    lore_storage::local::immutable_store::ImmutableStoreSettings::default(),
+                )
+                .await
+                .expect("Failed to create store");
+                let write_token =
+                    lore_revision::repository::RepositoryWriteToken::acquire(path.as_path()).await;
+                let repository = Arc::new(
+                    RepositoryContext::new(
+                        default_repository_creation_args(
+                            immutable_store.clone(),
+                            mutable_store.clone(),
+                        )
+                        .with_path(&path),
+                    )
+                    .with_write_token(write_token.share()),
+                );
+
+                let state = State::new();
+                state
+                    .node_add(
+                        repository.clone(),
+                        ROOT_NODE,
+                        Node {
+                            name_hash: hash_string("only"),
+                            ..Default::default()
+                        },
+                        "only",
+                    )
+                    .await
+                    .expect("Failed to add the node");
+                let signature = state
+                    .serialize(repository.clone(), &write_token)
+                    .await
+                    .expect("Failed to serialize");
+
+                let rehashing = State::deserialize(repository.clone(), signature)
+                    .await
+                    .expect("Failed to deserialize");
+                rehashing.force_rehash_names();
+                rehashing.mark_dirty();
+                let rehashed = rehashing
+                    .serialize(repository, &write_token)
+                    .await
+                    .expect("Failed to serialize while rehashing");
+
+                assert_eq!(
+                    rehashed, signature,
+                    "rewriting the blocks unchanged must give the same signature"
+                );
+            }))
+            .await
+            .expect("Task failed");
+    }
+
     #[tokio::test]
     async fn collect_new_name_fragments() {
         let (_immutable_store, mutable_store, execution) =

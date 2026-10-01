@@ -741,8 +741,14 @@ impl State {
         }
     }
 
+    /// Writes the state's dirty blocks, link list, tree, and data to the immutable store, and
+    /// returns its signature. A state that is not dirty returns its signature unwritten.
+    ///
+    /// Takes the state's `Arc`: a state that rehashes its node names, as one read in a format
+    /// before [`StateFormat::LowerCaseHash`] does, loads every block in a task of its own, and
+    /// each task holds the state.
     pub async fn serialize(
-        &self,
+        self: &Arc<Self>,
         repository: Arc<RepositoryContext>,
         _token: &RepositoryWriteToken,
     ) -> Result<Hash, StateError> {
@@ -759,19 +765,19 @@ impl State {
             // Deserialize all blocks to force update the node name hashes, as state format
             // requires all blocks to have same format
             lore_info!("Updating all state block name hashes");
+            let block_count = self.tree(repository.clone()).await?.block_count as usize;
             let mut tasks = JoinSet::new();
             let mut result = Ok(());
-            let static_self = unsafe { extend_lifetime(self) };
-            let block_count = self.block_count();
             for block_index in 0..block_count {
+                let state = self.clone();
                 let repository = repository.clone();
                 lore_spawn!(tasks, async move {
                     lore_trace!("  block {}/{}", block_index + 1, block_count);
-                    let block = static_self.block(repository, block_index).await?;
+                    let block = state.block(repository, block_index).await?;
                     {
                         block.write().mark_dirty();
                     }
-                    static_self.block_modified(block, block_index);
+                    state.block_modified(block, block_index);
                     Ok(())
                 });
                 if let Some(task_result) = tasks.try_join_next() {
