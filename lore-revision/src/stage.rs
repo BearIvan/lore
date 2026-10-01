@@ -3279,11 +3279,10 @@ async fn stage_from_parent_revision_in_operation(
                 // Restoring to a merge parent leaves content the current revision does not
                 // hold, so the times it lands with state nothing and are left to drop with
                 // the operation.
-                let restore_path = relative_path.clone();
                 crate::fs::realize::realize_file(
                     repository.clone(),
                     operation.clone(),
-                    &restore_path,
+                    relative_path.clone(),
                     node,
                     Arc::new(SyncRealizeStats::default()),
                 )
@@ -3665,11 +3664,10 @@ pub(crate) async fn stage_link_paths_from_parent_revision(
                 // `link_context.path` shares the parent's path and
                 // `mount_path` is parent-relative, so realizing through the
                 // link context writes to `<parent>/<mount>/<file>`.
-                let restore_path = mount_path.clone();
                 crate::fs::realize::realize_file(
                     group.link_context.clone(),
                     operation.clone(),
-                    &restore_path,
+                    mount_path.clone(),
                     node_t,
                     Arc::new(SyncRealizeStats::default()),
                 )

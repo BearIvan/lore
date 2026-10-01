@@ -2052,7 +2052,7 @@ async fn reset_file_realize(
     crate::fs::realize::realize_file(
         repository.clone(),
         operation,
-        &relative_path,
+        relative_path,
         node,
         Arc::new(SyncRealizeStats::default()),
     )

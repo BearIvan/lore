@@ -1139,7 +1139,7 @@ pub async fn restore_link_paths_from_state(
             crate::fs::realize::realize_file(
                 link_context.clone(),
                 operation.clone(),
-                &mount_path,
+                mount_path,
                 node,
                 Arc::default(),
             )

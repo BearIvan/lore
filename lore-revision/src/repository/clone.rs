@@ -13,11 +13,13 @@ use std::sync::atomic::Ordering;
 use dashmap::DashMap;
 use dashmap::DashSet;
 use dashmap::Entry;
+use futures::FutureExt;
 use lore_base::lore_spawn;
 use lore_error_set::prelude::*;
 use serde::Deserialize;
 use serde::Serialize;
 use tokio::sync::Notify;
+use tokio::sync::OwnedSemaphorePermit;
 use tokio::sync::Semaphore;
 use tokio::sync::mpsc;
 use tokio::task::JoinSet;
@@ -1594,15 +1596,10 @@ pub async fn clone_execute(
             repository: item.repository,
             ..ctx.clone()
         };
-        lore_spawn!(tasks, async move {
-            let _permit = permit;
-            let stats = item_ctx.stats.clone();
-            stats.complete.file_count.fetch_add(1, Ordering::Relaxed);
-            stats.file_inflight_count.fetch_add(1, Ordering::Relaxed);
-            let result = clone_file(item_ctx, item.node, item.repository_path).await;
-            stats.file_inflight_count.fetch_sub(1, Ordering::Relaxed);
-            result
-        });
+        lore_spawn!(
+            tasks,
+            clone_file(item_ctx, item.node, item.repository_path, permit)
+        );
 
         while let Some(result) = tasks.try_join_next() {
             match result
@@ -1764,11 +1761,19 @@ async fn ensure_parent_dir(
     Ok(())
 }
 
-async fn clone_file(
+/// Writes `node` to `repository_path`, or retains the file there when it holds the node.
+///
+/// Returns the modified time entry of a file written or retained, and `None` for one a dry run
+/// would write or `ignore_existing` leaves in place. Counts the file as in flight, and holds
+/// `permit`, until it is done. Not an `async fn`, which would hold a second copy of its
+/// arguments.
+#[allow(clippy::manual_async_fn)]
+fn clone_file(
     ctx: CloneContext,
     node: Node,
     repository_path: RelativePath,
-) -> Result<Option<(Hash, u64)>, CloneError> {
+    permit: OwnedSemaphorePermit,
+) -> impl Future<Output = Result<Option<(Hash, u64)>, CloneError>> {
     let CloneContext {
         repository,
         operation,
@@ -1776,43 +1781,112 @@ async fn clone_file(
         stats,
         ..
     } = ctx;
+    stats.complete.file_count.fetch_add(1, Ordering::Relaxed);
+    stats.file_inflight_count.fetch_add(1, Ordering::Relaxed);
+    let inflight = stats.clone();
 
-    let context = execution_context();
-    let call = context.globals();
-    let force = call.force();
-    let file_info = operation.file_info(&repository_path).await;
-    if let Ok(file_info) = file_info
-        && file_info.exists()
-    {
-        if options.ignore_existing {
-            lore_trace!("Ignore existing file {}", repository_path);
-            return Ok(None);
-        }
+    async move {
+        let context = execution_context();
+        let call = context.globals();
+        let force = call.force();
+        let file_info = operation.file_info(&repository_path).await;
+        if let Ok(file_info) = file_info
+            && file_info.exists()
+        {
+            if options.ignore_existing {
+                lore_trace!("Ignore existing file {}", repository_path);
+                return Ok(None);
+            }
 
-        // Check if the existing file matches what we will realize from state. Only an
-        // established match retains the file: a file that cannot be read settles nothing, and
-        // keeping it would leave content nobody compared standing in for the node.
-        let matches_node = matches!(
-            file_modification(
-                repository.clone(),
-                &node,
-                file_info.mtime(),
-                file_info.size(),
-                &repository_path,
-                force,
-                &operation,
-                &lore_storage::ContentHashes::default(),
-            )
-            .await,
-            Ok(FileModification::UnmodifiedByMtime | FileModification::UnmodifiedByHash)
-        );
-        if matches_node {
-            // Existing file is identical, just use it
-            match_node_executable::<CloneError>(&operation, &repository_path, &node, &file_info)
+            // Check if the existing file matches what we will realize from state. Only an
+            // established match retains the file: a file that cannot be read settles nothing, and
+            // keeping it would leave content nobody compared standing in for the node.
+            let matches_node = matches!(
+                file_modification(
+                    repository.clone(),
+                    &node,
+                    file_info.mtime(),
+                    file_info.size(),
+                    &repository_path,
+                    force,
+                    &operation,
+                    &lore_storage::ContentHashes::default(),
+                )
+                .await,
+                Ok(FileModification::UnmodifiedByMtime | FileModification::UnmodifiedByHash)
+            );
+            if matches_node {
+                // Existing file is identical, just use it
+                match_node_executable::<CloneError>(
+                    &operation,
+                    &repository_path,
+                    &node,
+                    &file_info,
+                )
                 .await?;
 
-            lore_trace!("Retain {}", repository_path);
-            stats.complete.file_retain.fetch_add(1, Ordering::Relaxed);
+                lore_trace!("Retain {}", repository_path);
+                stats.complete.file_retain.fetch_add(1, Ordering::Relaxed);
+                stats.complete.file_complete.fetch_add(1, Ordering::Relaxed);
+                return Ok(Some(state::file_modified_time_entry(
+                    &repository,
+                    &repository_path,
+                    file_info.mtime(),
+                )));
+            }
+            if !force {
+                lore_error!(
+                    "File already exist in file system and not identical {}",
+                    repository_path
+                );
+                return Err(CloneError::internal(format!(
+                    "File already exist in file system: {repository_path}"
+                )));
+            }
+            if !call.dry_run() {
+                let mut retry = util::fs::file_unlink_retry();
+
+                while let Err(err) = operation.remove_recursive(&repository_path).await {
+                    lore_trace!(
+                        "Unable to unlink local directory {}: {} (attempt {} of {})",
+                        repository_path,
+                        err,
+                        retry.counter() + 1,
+                        retry.limit()
+                    );
+                    if !retry.wait().await {
+                        return Err(CloneError::internal(format!(
+                            "Failed to force delete existing file {repository_path}"
+                        )));
+                    }
+                }
+            }
+            stats.complete.file_replace.fetch_add(1, Ordering::Relaxed);
+            lore_trace!("Replace {}", repository_path);
+        } else {
+            lore_trace!("Create {}", repository_path);
+        }
+
+        if !call.dry_run() {
+            // Discovery no longer pre-creates dirs; create per-file parent just-in-time via the cache.
+            ensure_parent_dir(&repository_path, &operation, &stats).await?;
+
+            let (fragment, file_info) = set_file_to_node::<CloneError>(
+                &operation,
+                repository.clone(),
+                &node,
+                &repository_path,
+            )
+            .await?;
+            stats
+                .complete
+                .bytes_transferred
+                .fetch_add(fragment.size_content, Ordering::Relaxed);
+
+            // Compute the (mtime_key, mtime) pair and return it; the caller
+            // (`clone_execute`) collects pairs in a stack-local buffer and
+            // fire-and-forgets a batched mutable-store write when the buffer fills,
+            // so each `clone_file` task avoids awaiting its own bucket write.
             stats.complete.file_complete.fetch_add(1, Ordering::Relaxed);
             return Ok(Some(state::file_modified_time_entry(
                 &repository,
@@ -1820,99 +1894,49 @@ async fn clone_file(
                 file_info.mtime(),
             )));
         }
-        if !force {
-            lore_error!(
-                "File already exist in file system and not identical {}",
-                repository_path
-            );
-            return Err(CloneError::internal(format!(
-                "File already exist in file system: {repository_path}"
-            )));
-        }
-        if !call.dry_run() {
-            let mut retry = util::fs::file_unlink_retry();
 
-            while let Err(err) = operation.remove_recursive(&repository_path).await {
-                lore_trace!(
-                    "Unable to unlink local directory {}: {} (attempt {} of {})",
-                    repository_path,
-                    err,
-                    retry.counter() + 1,
-                    retry.limit()
-                );
-                if !retry.wait().await {
-                    return Err(CloneError::internal(format!(
-                        "Failed to force delete existing file {repository_path}"
-                    )));
-                }
-            }
-        }
-        stats.complete.file_replace.fetch_add(1, Ordering::Relaxed);
-        lore_trace!("Replace {}", repository_path);
-    } else {
-        lore_trace!("Create {}", repository_path);
-    }
-
-    if !call.dry_run() {
-        // Discovery no longer pre-creates dirs; create per-file parent just-in-time via the cache.
-        ensure_parent_dir(&repository_path, &operation, &stats).await?;
-
-        let (fragment, file_info) =
-            set_file_to_node::<CloneError>(&operation, repository.clone(), &node, &repository_path)
-                .await?;
-        stats
-            .complete
-            .bytes_transferred
-            .fetch_add(fragment.size_content, Ordering::Relaxed);
-
-        // Compute the (mtime_key, mtime) pair and return it; the caller
-        // (`clone_execute`) collects pairs in a stack-local buffer and
-        // fire-and-forgets a batched mutable-store write when the buffer fills,
-        // so each `clone_file` task avoids awaiting its own bucket write.
         stats.complete.file_complete.fetch_add(1, Ordering::Relaxed);
-        return Ok(Some(state::file_modified_time_entry(
-            &repository,
-            &repository_path,
-            file_info.mtime(),
-        )));
+
+        Ok(None)
     }
-
-    stats.complete.file_complete.fetch_add(1, Ordering::Relaxed);
-
-    Ok(None)
+    .map(move |result| {
+        inflight.file_inflight_count.fetch_sub(1, Ordering::Relaxed);
+        drop(permit);
+        result
+    })
 }
 
-async fn spawn_clone_file(
+/// Spawns [`clone_file`] once a file permit is free. The task records the file's modified time
+/// itself, as the tasks of `clone_node` return none.
+///
+/// Not an `async fn`, which would hold a second copy of its arguments.
+#[allow(clippy::manual_async_fn)]
+fn spawn_clone_file(
     tasks: &mut JoinSet<Result<(), CloneError>>,
     ctx: CloneContext,
     node: Node,
     repository_path: RelativePath,
-) {
-    let spawn_ctx = ctx.clone();
-    let CloneContext { stats, .. } = ctx;
-    let permit = Arc::clone(&stats.file_inflight)
-        .acquire_owned()
-        .await
-        .expect("file_inflight semaphore closed unexpectedly");
-    let modified_times = spawn_ctx.modified_times.clone();
-    lore_spawn!(tasks, async move {
-        let _permit = permit;
-        stats.complete.file_count.fetch_add(1, Ordering::Relaxed);
-        stats.file_inflight_count.fetch_add(1, Ordering::Relaxed);
-        let result = clone_file(spawn_ctx, node, repository_path).await;
-        stats.file_inflight_count.fetch_sub(1, Ordering::Relaxed);
-        // Link sub-clones don't share the consumer-loop mtime batch; small
-        // workload, so just inline-store the mtime here. Result is squashed
-        // back to `()` so the JoinSet shape stays the same as elsewhere.
-        match result {
-            Ok(Some(entry)) => {
-                modified_times.push(entry);
-                Ok(())
-            }
-            Ok(None) => Ok(()),
-            Err(err) => Err(err),
-        }
-    });
+) -> impl Future<Output = ()> + '_ {
+    async move {
+        let permit = Arc::clone(&ctx.stats.file_inflight)
+            .acquire_owned()
+            .await
+            .expect("file_inflight semaphore closed unexpectedly");
+        let modified_times = ctx.modified_times.clone();
+        lore_spawn!(
+            tasks,
+            clone_file(ctx, node, repository_path, permit).map(move |result| {
+                match result {
+                    Ok(Some(entry)) => {
+                        modified_times.push(entry);
+                        Ok(())
+                    }
+                    Ok(None) => Ok(()),
+                    Err(err) => Err(err),
+                }
+            })
+        );
+    }
 }
 
 fn spawn_clone_link(
