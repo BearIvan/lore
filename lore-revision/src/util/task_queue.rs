@@ -123,7 +123,7 @@ where
                 interval.tick().await;
 
                 let num_active_tasks = otel_clone.latent_num_active_tasks.load(Ordering::Acquire);
-                let submitted_tasks_update = otel_clone.latent_num_submitted_tasks.fetch_update(
+                let submitted_tasks_update = otel_clone.latent_num_submitted_tasks.try_update(
                     Ordering::Relaxed,
                     Ordering::Relaxed,
                     |_| Some(0),

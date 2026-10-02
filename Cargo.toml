@@ -49,7 +49,7 @@ anstream = "0.6.20"
 anyhow = "1.0.103"
 async-channel = "2.5.0"
 async-stream = "0.3.6"
-async-trait = "0.1.89"
+async-trait = "0.1.92"
 axum = "0.8.4"
 base64 = "0.22.1"
 bitcode = { version = "0.6.9", features = ["serde"] }

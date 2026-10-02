@@ -121,8 +121,8 @@ macro_rules! progress_bar_internal_print {
             let _ = ::std::write!(target_stream, "{}", buffer);
         } else {
             let mut stream_lock = $crate::print_macros::ANSTREAM_STDOUT.lock();
-            let mut stream = &mut *stream_lock;
-            let _ = ::std::write!(&mut stream, $($arg)*);
+            let stream = &mut *stream_lock;
+            let _ = ::std::write!(stream, $($arg)*);
         }
     }};
 }

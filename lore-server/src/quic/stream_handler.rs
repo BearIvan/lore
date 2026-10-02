@@ -86,7 +86,7 @@ impl AdmissionGuard {
     /// `None` once `limit` requests are already outstanding.
     fn take(count: &Arc<AtomicUsize>, limit: usize) -> Option<Self> {
         count
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |outstanding| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |outstanding| {
                 (outstanding < limit).then_some(outstanding + 1)
             })
             .ok()

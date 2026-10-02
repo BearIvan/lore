@@ -6653,7 +6653,7 @@ mod storage_remote_tests {
             if address == self.target
                 && self
                     .remaining
-                    .fetch_update(
+                    .try_update(
                         std::sync::atomic::Ordering::SeqCst,
                         std::sync::atomic::Ordering::SeqCst,
                         |n| n.checked_sub(1),
