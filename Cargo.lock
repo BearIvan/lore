@@ -2631,6 +2631,8 @@ dependencies = [
  "clap_complete",
  "libc",
  "lore",
+ "lore-client",
+ "lore-macro",
  "parking_lot",
  "serde",
  "serde_json",

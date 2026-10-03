@@ -6,10 +6,9 @@ publish = false
 
 [lib]
 name = "lore_base"
-
-# Writes the build version into finished artifacts; see src/version.rs.
 test = false
 
+# Writes the build version into finished artifacts; see src/version.rs.
 [[bin]]
 name = "lore-stamp"
 path = "src/bin/lore-stamp.rs"
@@ -59,9 +58,10 @@ lore-io = { workspace = true }
 pin-project = { workspace = true }
 tokio = { workspace = true }
 
-# fs
+# tests
 lore-macro = { workspace = true }
 
+# fs
 [target.'cfg(target_family = "windows")'.dependencies]
 windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Storage_ProjectedFileSystem", "Win32_Storage_FileSystem", "Win32_System_Diagnostics", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_Security"] }
 

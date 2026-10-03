@@ -18,7 +18,7 @@ macro_rules! print {
     ($($arg:tt)*) => {{
         use std::io::Write as _;
         let _pb_suspend = $crate::progress_bar::suspend_current_progress_bar();
-        if cfg!(test) {
+        if cfg!(feature = "test-util") {
             let mut target_stream = std::io::stdout();
             let buffer = anstream::_macros::to_adapted_string(
                 &format_args!($($arg)*),
@@ -43,7 +43,7 @@ macro_rules! println {
     ($($arg:tt)*) => {{
         use std::io::Write as _;
         let _pb_suspend = $crate::progress_bar::suspend_current_progress_bar();
-        if cfg!(test) {
+        if cfg!(feature = "test-util") {
             let mut target_stream = std::io::stdout();
             let buffer = anstream::_macros::to_adapted_string(
                 &format_args!($($arg)*),
@@ -65,7 +65,7 @@ macro_rules! eprint {
     ($($arg:tt)*) => {{
         use std::io::Write as _;
         let _pb_suspend = $crate::progress_bar::suspend_current_progress_bar();
-        if cfg!(test) {
+        if cfg!(feature = "test-util") {
             let mut target_stream = std::io::stderr();
             let buffer = anstream::_macros::to_adapted_string(
                 &format_args!($($arg)*),
@@ -90,7 +90,7 @@ macro_rules! eprintln {
     ($($arg:tt)*) => {{
         use std::io::Write as _;
         let _pb_suspend = $crate::progress_bar::suspend_current_progress_bar();
-        if cfg!(test) {
+        if cfg!(feature = "test-util") {
             let mut target_stream = std::io::stderr();
             let buffer = anstream::_macros::to_adapted_string(
                 &format_args!($($arg)*),
@@ -112,7 +112,7 @@ macro_rules! eprintln {
 macro_rules! progress_bar_internal_print {
     ($($arg:tt)*) => {{
         use std::io::Write as _;
-        if cfg!(test) {
+        if cfg!(feature = "test-util") {
             let mut target_stream = std::io::stdout();
             let buffer = anstream::_macros::to_adapted_string(
                 &format_args!($($arg)*),
