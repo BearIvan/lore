@@ -6,12 +6,15 @@ publish = false
 
 [lib]
 name = "lore_io"
+test = false
 
 [dependencies]
 bytes = { workspace = true }
 parking_lot = { workspace = true }
 
 # The uring backend is the only part of the library that calls libc, for eventfd and poll.
+lore-macro = { workspace = true }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 io-uring = { workspace = true }
 
@@ -52,9 +55,14 @@ tokio = { workspace = true }
 # of what the completion-port backend is for. See `iocp::tests::overlapped_pipe_pair`. The
 # conformance suite names `ERROR_SHARING_VIOLATION` and `FILE_SHARE_READ` when it pins the share
 # modes, hence the foundation and filesystem modules here as well.
+lore-io = { workspace = true, features = ["test-util"] }
+
 [target.'cfg(target_family = "windows")'.dev-dependencies]
 windows-sys = { workspace = true, features = [
     "Win32_Foundation",
     "Win32_Storage_FileSystem",
     "Win32_System_Pipes",
 ] }
+
+[features]
+test-util = []

@@ -2743,6 +2743,8 @@ dependencies = [
  "io-uring",
  "libc",
  "lore-base",
+ "lore-io",
+ "lore-macro",
  "parking_lot",
  "tokio",
  "windows-sys 0.61.2",
