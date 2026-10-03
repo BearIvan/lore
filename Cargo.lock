@@ -2606,6 +2606,7 @@ dependencies = [
  "anyhow",
  "clap",
  "lore",
+ "lore-chaos-client",
  "parking_lot",
  "rand",
  "rand_distr",
