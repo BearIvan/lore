@@ -2494,6 +2494,7 @@ dependencies = [
  "ctor",
  "dashmap",
  "libc",
+ "lore",
  "lore-base",
  "lore-credential",
  "lore-error-set",

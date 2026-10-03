@@ -13,6 +13,7 @@ pub trait LoreArgs {
 }
 
 // Separate from `LoreArgs`, which is public, so that running a handler stays internal to this crate.
+#[lore_macro::test_pub]
 pub(crate) trait InvokableLoreArgs: LoreArgs {
     /// The future of this arg type's handler, named by its `#[handler]` attribute.
     ///

@@ -6,6 +6,7 @@ publish = false
 
 [lib]
 name = "lore"
+test = false
 
 [dependencies]
 bitcode = { workspace = true }
@@ -41,9 +42,12 @@ windows-sys = { workspace = true, features = [
 default = []
 oodle = ["lore-revision/oodle"]
 swfs = ["lore-revision/swfs"]
+test-util = []
 
 [dev-dependencies]
+# The unit-test binary's process sandbox, set up before the harness starts; see tests/unit/main.rs.
 ctor = { workspace = true }
 lore-base = { workspace = true, features = ["test-util"] }
 rand = { workspace = true }
 serial_test = { workspace = true }
+lore = { workspace = true, features = ["test-util"] }
