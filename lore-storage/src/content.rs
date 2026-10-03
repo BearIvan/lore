@@ -119,6 +119,7 @@ impl<'a> ContentSource<'a> {
     /// internal fault for what is an argument error. Both are `InvalidArguments` on the first
     /// attempt. Everything else keeps the back-off, which is there for a reader holding the file
     /// open on Windows.
+    #[lore_macro::test_pub]
     pub(crate) async fn open(&self) -> Result<(ContentHandle, u64), StorageError> {
         let path = self.host_path();
         let mut retry = crate::retry(10, 10_000, 10);

@@ -27,8 +27,6 @@ pub mod options;
 pub mod packstore;
 pub mod read;
 pub mod store_types;
-#[cfg(test)]
-pub(crate) mod test_util;
 pub(crate) mod typed_bytes;
 pub(crate) mod types;
 pub mod write;

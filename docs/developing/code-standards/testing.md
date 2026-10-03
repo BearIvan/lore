@@ -84,6 +84,9 @@ Look for the public way first: a trait method, a constructor, a re-export. A tes
 When a test does need an item that is not public, make it public for tests only, behind the crate's `test-util` feature, and enable the feature from the crate's own dev-dependencies:
 
 ```toml
+[dependencies]
+lore-macro = { workspace = true }
+
 [features]
 test-util = []
 
@@ -91,7 +94,24 @@ test-util = []
 lore-foo = { workspace = true, features = ["test-util"] }
 ```
 
-For private fields and functions, add one gated `test_util` child module beside them. A child module sees its parent's private items, and an inherent `impl` may live anywhere in the crate, so accessors, constructors, and wrappers all fit in it and the production code stays as it is:
+Mark the item with `#[lore_macro::test_pub]`. Built with `test-util`, the item is `pub`, and so are a struct's fields. Built without it, the item is exactly as written. It applies to functions and methods, structs, enums, constants, `static` items, type aliases, and traits. Put it first among the item's attributes, above any `#[derive]`:
+
+```rust
+// lore-storage/src/local/immutable_store/info.rs
+#[lore_macro::test_pub]
+const INFO_MAGIC: u32 = u32::from_le_bytes(*b"IS_I");
+
+#[lore_macro::test_pub]
+#[repr(C)]
+#[derive(Debug, IntoBytes, FromBytes, Immutable)]
+pub struct ImmutableStoreInfo {
+    magic: u32,
+    version: u32,
+    pub next_group_index_to_migrate_oodle: i32,
+}
+```
+
+When a test needs read access or a wrapper rather than a wider item, add one gated `test_util` child module beside the private items instead. A child module sees its parent's private items, and an inherent `impl` may live anywhere in the crate, so accessors, constructors, and wrappers all fit in it and the production code stays as it is:
 
 ```rust
 // lore-credential/src/token_store.rs
@@ -112,16 +132,23 @@ pub mod test_util {
 }
 ```
 
-For a private module whose items are already `pub`, switch the module instead:
+To make a private module public, switch its declaration. The attribute cannot do this, because it does not apply to a module declared in its own file. A module that already has a `cfg` keeps it in both declarations:
 
 ```rust
 #[cfg(not(feature = "test-util"))]
 mod internals;
 #[cfg(feature = "test-util")]
 pub mod internals;
+
+#[cfg(all(feature = "oodle", not(feature = "test-util")))]
+mod oodle_migration;
+#[cfg(all(feature = "oodle", feature = "test-util"))]
+pub mod oodle_migration;
 ```
 
-Used this way the feature adds access and nothing else: accessors, constructors, and wrappers over code that already exists. Helper code stays in `tests/unit/` and its dependencies in `[dev-dependencies]`. Release builds never see it: cargo applies a dev-dependency's features only to builds that include the dev-dependencies. Do not make an item `pub` unconditionally for a test. It becomes API other crates can reach, and the compiler stops reporting it once it falls out of use.
+`cfg(test)` is set only when cargo compiles the crate itself as a test. The tests in `tests/unit/` link the library as built normally, so a `#[cfg(test)]` item or a `#[cfg_attr(test, ...)]` in library code is not there for them. When moving inline tests out, change each one to `feature = "test-util"`.
+
+Used this way the feature adds access and nothing else: wider visibility, accessors, constructors, and wrappers over code that already exists. Helper code stays in `tests/unit/` and its dependencies in `[dev-dependencies]`. Release builds never see it: cargo applies a dev-dependency's features only to builds that include the dev-dependencies. Do not make an item `pub` unconditionally for a test. It becomes API other crates can reach, and the compiler stops reporting it once it falls out of use.
 
 ---
 
@@ -378,4 +405,4 @@ Lore has a load-testing suite that exercises concurrent clone, commit, sync, loc
 7. **Mark tests** with `@pytest.mark.smoke` for smoke test runs.
 8. **Use `offline=True`** for operations that don't need the server.
 9. **Feature-gate integration tests** that require external dependencies.
-10. **Put Rust unit tests in `tests/unit/`**, with `[lib] test = false`. Give a test its own `tests/*.rs` binary only when it needs its own process, and reach private items only through the `test-util` feature.
+10. **Put Rust unit tests in `tests/unit/`**, with `[lib] test = false`. Give a test its own `tests/*.rs` binary only when it needs its own process, and reach private items only through the `test-util` feature, usually with `#[lore_macro::test_pub]`.

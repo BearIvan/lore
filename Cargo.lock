@@ -2945,6 +2945,8 @@ dependencies = [
  "lore-base",
  "lore-error-set",
  "lore-io",
+ "lore-macro",
+ "lore-storage",
  "lore-telemetry",
  "lore-transport",
  "lz4-sys",
