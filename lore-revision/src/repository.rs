@@ -226,6 +226,7 @@ pub struct StoreConfig {
 }
 
 impl StoreConfig {
+    #[lore_macro::test_pub]
     fn client_default() -> Self {
         StoreConfig {
             max_capacity: Some(2_000_000),
@@ -295,6 +296,7 @@ pub struct VfsConfig {
 /// background tasks would otherwise race its own teardown. Read-only opens never
 /// spawn it. When enabled but the repository has no `[store]` config, the built-in
 /// [`StoreConfig::client_default`] caps apply.
+#[lore_macro::test_pub]
 fn incremental_gc_options(
     read_only: bool,
     suppress_incremental: bool,
@@ -307,45 +309,6 @@ fn incremental_gc_options(
             .to_options()
     } else {
         ImmutableStoreCreateOptions::none()
-    }
-}
-
-#[cfg(test)]
-mod store_config_tests {
-    use super::StoreConfig;
-    use super::incremental_gc_options;
-
-    /// The default GC caps that back the automatic incremental GC on writes when a
-    /// repository has no `[store]` config must be populated and non-zero; otherwise the
-    /// evictor and compactor would be spawned with zero caps (`Some(0)`) and never run.
-    #[test]
-    fn client_default_yields_nonzero_gc_caps() {
-        let options = StoreConfig::client_default().to_options();
-        assert!(options.max_capacity.is_some_and(|c| c > 0));
-        assert!(options.max_size.is_some_and(|s| s > 0));
-    }
-
-    #[test]
-    fn write_op_spawns_incremental_gc_by_default() {
-        // Write op, `--no-gc` not set, no `[store]` config: incremental GC on with
-        // the non-zero `client_default` caps.
-        let options = incremental_gc_options(false, false, None);
-        assert!(options.max_capacity.is_some_and(|c| c > 0));
-        assert!(options.max_size.is_some_and(|s| s > 0));
-    }
-
-    #[test]
-    fn no_gc_suppresses_incremental_gc() {
-        let options = incremental_gc_options(false, true, None);
-        assert!(options.max_capacity.is_none());
-        assert!(options.max_size.is_none());
-    }
-
-    #[test]
-    fn read_only_op_never_spawns_incremental_gc() {
-        let options = incremental_gc_options(true, false, None);
-        assert!(options.max_capacity.is_none());
-        assert!(options.max_size.is_none());
     }
 }
 
@@ -576,11 +539,13 @@ const INTERNAL_SERVER_CONTEXT: InternalServerContext = InternalServerContext;
 
 /// Shared, clone-able future that resolves the pending remote connection exactly once
 /// while fanning the result out to all awaiters.
+#[lore_macro::test_pub]
 type RemoteFuture = Shared<BoxFuture<'static, Result<Arc<Connection>, ProtocolError>>>;
 
 /// State machine for the remote connection. Lives behind `Arc<RwLock<_>>` so related
 /// contexts (e.g. filter views) can share the same underlying connection state while
 /// link/layer contexts build their own against a freshly-connected module.
+#[lore_macro::test_pub]
 pub(crate) enum RemoteState {
     /// No remote configured, or globals set offline — permanent terminal state.
     Offline,
@@ -630,6 +595,7 @@ impl RepositoryPaths {
     }
 }
 
+#[lore_macro::test_pub]
 pub struct RepositoryContext {
     /// Working-tree path for this repository. `None` for path-less contexts
     /// (server-side handlers, in-memory revision-tree handles) that operate
@@ -679,6 +645,7 @@ impl std::fmt::Debug for RepositoryContext {
 impl RemoteState {
     /// Classify a resolved connect result into a terminal state. A `NoRemote` error
     /// reflects "no remote configured" rather than a failure, so it becomes `Offline`.
+    #[lore_macro::test_pub]
     fn from_result(remote: Result<Arc<Connection>, ProtocolError>) -> Self {
         match remote {
             Ok(conn) => RemoteState::Connected(conn),
@@ -717,6 +684,7 @@ impl RepositoryContext {
         )
     }
 
+    #[lore_macro::test_pub]
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new_with_state(
         paths: Option<RepositoryPaths>,
@@ -1279,6 +1247,7 @@ impl RepositoryContext {
     /// `correlation_id` is only read when the pool has to be resolved. It belongs
     /// to the command being executed and a context belongs to one command, so a
     /// cached pool is always the one this context's correlation id asked for.
+    #[lore_macro::test_pub]
     pub(crate) async fn session_pool(
         &self,
         correlation_id: &str,
@@ -1312,6 +1281,7 @@ impl RepositoryContext {
     /// caller handed the pool directly would pick from it eagerly, and an eager
     /// session cannot be invalidated and retried — see [`crate::immutable`]'s
     /// session resolution.
+    #[lore_macro::test_pub]
     fn cached_session_pool(&self) -> Option<Arc<SessionPool>> {
         self.session_pool.read().upgrade()
     }
@@ -1319,8 +1289,8 @@ impl RepositoryContext {
     /// Hold `pool` as resolved, standing in for a resolution against a live remote.
     /// The caller keeps the strong reference, as the connection's session cache
     /// does.
-    #[cfg(test)]
-    pub(crate) fn set_session_pool(&self, pool: &Arc<SessionPool>) {
+    #[cfg(feature = "test-util")]
+    pub fn set_session_pool(&self, pool: &Arc<SessionPool>) {
         *self.session_pool.write() = Arc::downgrade(pool);
     }
 
@@ -1333,6 +1303,7 @@ impl RepositoryContext {
     /// costs only the session the caller would have built anyway. A failed connect
     /// is not offline — a session built on one reports the failure, which is the
     /// answer that belongs to it.
+    #[lore_macro::test_pub]
     pub(crate) fn is_offline(&self) -> bool {
         self.remote
             .try_read()
@@ -3782,616 +3753,5 @@ pub async fn resolve_by_name(
                 .forward::<RepositoryError>("Repository not found")
         }
         Err(err) => Err(err).forward::<RepositoryError>("Repository not found"),
-    }
-}
-
-#[cfg(test)]
-pub mod test_helpers {
-    use std::sync::Arc;
-
-    use crate::fs::filesystem_provider::FilesystemProvider;
-    use crate::instance::InstanceId;
-    use crate::repository::DOT_LORE;
-    use crate::repository::RepositoryPaths;
-
-    pub fn default_repository_creation_args(
-        immutable_store: std::sync::Arc<dyn lore_storage::ImmutableStore>,
-        mutable_store: std::sync::Arc<dyn lore_storage::MutableStore>,
-    ) -> crate::repository::RepositoryContextCreationArgs {
-        crate::repository::RepositoryContextCreationArgs {
-            paths: None,
-            immutable_store,
-            mutable_store,
-            id: lore_base::types::Context::from(uuid::Uuid::now_v7()).into(),
-            instance_id: InstanceId::generate(),
-            remote: Err(lore_transport::ProtocolError::from(
-                lore_base::error::NoRemote,
-            )),
-            filter: std::sync::Arc::default(),
-            filesystem_provider: None,
-        }
-    }
-
-    pub trait RepositoryContextCreationArgsExt {
-        fn with_path(self, path: impl AsRef<std::path::Path>) -> Self;
-        fn with_id(self, id: crate::lore::RepositoryId) -> Self;
-        fn with_instance_id(self, id: crate::instance::InstanceId) -> Self;
-        fn with_remote(
-            self,
-            remote: Result<
-                std::sync::Arc<lore_transport::Connection>,
-                lore_transport::ProtocolError,
-            >,
-        ) -> Self;
-        fn with_filter(self, filter: std::sync::Arc<crate::filter::Filter>) -> Self;
-        fn with_filesystem_provider(self, filesystem_provider: Arc<dyn FilesystemProvider>)
-        -> Self;
-    }
-
-    impl RepositoryContextCreationArgsExt for crate::repository::RepositoryContextCreationArgs {
-        fn with_path(mut self, path: impl AsRef<std::path::Path>) -> Self {
-            self.paths = Some(RepositoryPaths::new(
-                path.as_ref().to_owned(),
-                path.as_ref().join(DOT_LORE),
-            ));
-            self
-        }
-
-        fn with_id(mut self, id: crate::lore::RepositoryId) -> Self {
-            self.id = id;
-            self
-        }
-
-        fn with_instance_id(mut self, id: crate::instance::InstanceId) -> Self {
-            self.instance_id = id;
-            self
-        }
-
-        fn with_remote(
-            mut self,
-            remote: Result<
-                std::sync::Arc<lore_transport::Connection>,
-                lore_transport::ProtocolError,
-            >,
-        ) -> Self {
-            self.remote = remote;
-            self
-        }
-
-        fn with_filter(mut self, filter: std::sync::Arc<crate::filter::Filter>) -> Self {
-            self.filter = filter;
-            self
-        }
-
-        fn with_filesystem_provider(
-            mut self,
-            filesystem_provider: Arc<dyn FilesystemProvider>,
-        ) -> Self {
-            self.filesystem_provider = Some(filesystem_provider);
-            self
-        }
-    }
-}
-
-#[cfg(test)]
-// These tests spawn tokio tasks directly without a LORE_CONTEXT, which is fine for
-// state-machine unit tests that don't touch the execution context.
-#[allow(clippy::disallowed_methods)]
-mod remote_state_tests {
-    //! Tests for the `RemoteState` state machine and the `RepositoryContext::remote()`
-    //! lazy resolution path. These exercise the classification logic and the Pending →
-    //! terminal-state promotion without requiring a real `Arc<Connection>` (Connection
-    //! construction is non-trivial and covered by integration tests instead). We cover:
-    //!
-    //! - Classification: `RemoteState::from_result` routes each error variant correctly.
-    //! - Terminal-state passthrough: `remote()` on Offline/Failed returns the expected
-    //!   result via the read-lock fast path.
-    //! - Pending resolution: `remote()` awaits the shared future and promotes the state.
-    //! - Concurrent awaiters: N tasks awaiting the same Pending converge on one result.
-    //! - Cancellation: cancelling awaiters mid-await does not break subsequent awaiters
-    //!   or the promotion.
-    use std::sync::Arc;
-
-    use futures::FutureExt;
-    use futures::future::BoxFuture;
-    use lore_transport::ProtocolError;
-
-    use super::RemoteFuture;
-    use super::RemoteState;
-    use super::RepositoryContext;
-    use crate::errors::Disconnected;
-    use crate::errors::NoRemote;
-    use crate::lore::RepositoryId;
-
-    fn disconnected() -> ProtocolError {
-        ProtocolError::from(Disconnected)
-    }
-
-    fn no_remote() -> ProtocolError {
-        ProtocolError::from(NoRemote)
-    }
-
-    /// Build a `RemoteFuture` that resolves to the given result, without going through
-    /// a real connect or spawning a task.
-    fn ready_remote(
-        result: Result<Arc<lore_transport::Connection>, ProtocolError>,
-    ) -> RemoteFuture {
-        let fut: BoxFuture<'static, _> = async move { result }.boxed();
-        fut.shared()
-    }
-
-    /// Build a minimal `RepositoryContext` carrying the given `RemoteState`. We construct
-    /// in-memory stores so the rest of the context is valid, but only `remote()` is
-    /// exercised.
-    async fn context_with_state(state: RemoteState) -> Arc<RepositoryContext> {
-        let (immutable, mutable) = super::create_client_memory_stores()
-            .await
-            .expect("in-memory stores should be creatable");
-        Arc::new(RepositoryContext::new_with_state(
-            None,
-            immutable,
-            mutable,
-            RepositoryId::default(),
-            crate::instance::InstanceId::default(),
-            state,
-            Arc::default(),
-            None,
-        ))
-    }
-
-    /// Nothing is cached until something resolves it, so the first reader or
-    /// writer drives the connect and a command that does neither remotely never
-    /// does.
-    #[tokio::test]
-    async fn a_fresh_context_has_no_session_pool_to_reuse() {
-        for state in [RemoteState::Offline, RemoteState::Failed(no_remote())] {
-            let context = context_with_state(state).await;
-            assert!(
-                context.cached_session_pool().is_none(),
-                "a context that has resolved nothing reported a pool"
-            );
-        }
-    }
-
-    /// Asking an offline context for a pool must not invent one, and must not
-    /// leave anything cached for the next caller to find.
-    #[tokio::test]
-    async fn an_offline_context_resolves_no_session_pool() {
-        let context = context_with_state(RemoteState::Offline).await;
-        assert!(context.session_pool("correlation").await.is_err());
-        assert!(context.cached_session_pool().is_none());
-    }
-
-    /// A pool for a context to hold, the strong reference left to the caller as the
-    /// connection's session cache holds it. The session in it is never resolved:
-    /// these tests ask which pool answered, not what it yields.
-    fn held_pool() -> Arc<lore_transport::SessionPool> {
-        let session = Arc::new(lore_transport::StorageSession::pending(|| async {
-            Err(ProtocolError::internal("a pooled session no test resolves"))
-        }));
-        Arc::new(lore_transport::SessionPool::new(vec![session]))
-    }
-
-    /// A pool once resolved is handed back without consulting the remote. This
-    /// context's connect has failed, so an answer at all is proof the pool was
-    /// reused rather than looked up again per call.
-    #[tokio::test]
-    async fn a_resolved_pool_is_reused_without_touching_the_remote() {
-        let context = context_with_state(RemoteState::Failed(disconnected())).await;
-        let pool = held_pool();
-        context.set_session_pool(&pool);
-
-        let reused = context
-            .session_pool("correlation")
-            .await
-            .expect("a context holding a pool answers from it");
-        assert!(Arc::ptr_eq(&reused, &pool));
-    }
-
-    /// The pool is held weakly, so dropping the pin — which is what
-    /// `StorageSession::invalidate` does to the connection's cache — sends the next
-    /// caller back to the remote rather than handing out sessions the server has
-    /// forgotten.
-    #[tokio::test]
-    async fn a_pool_whose_pin_is_dropped_is_not_reused() {
-        let context = context_with_state(RemoteState::Failed(disconnected())).await;
-        let pool = held_pool();
-        context.set_session_pool(&pool);
-        assert!(context.session_pool("correlation").await.is_ok());
-
-        drop(pool);
-        assert!(
-            context.session_pool("correlation").await.is_err(),
-            "an expired pool must send the caller back to the remote"
-        );
-    }
-
-    /// Only the terminal no-remote state answers yes. A failure and a connect
-    /// still in flight both have an answer a session carries, so a caller has to
-    /// build one.
-    #[tokio::test]
-    async fn only_a_context_without_a_remote_is_offline() {
-        assert!(
-            context_with_state(RemoteState::Offline).await.is_offline(),
-            "a context with no remote configured is offline"
-        );
-        for state in [
-            RemoteState::Failed(disconnected()),
-            RemoteState::Pending(ready_remote(Err(no_remote()))),
-        ] {
-            assert!(
-                !context_with_state(state).await.is_offline(),
-                "a context that has not settled on `Offline` reported itself offline"
-            );
-        }
-    }
-
-    /// The answer is taken without waiting, so a state lock held elsewhere reads
-    /// as not offline rather than blocking a caller that only wanted to skip work.
-    #[tokio::test]
-    async fn a_held_state_lock_does_not_answer_offline() {
-        let context = context_with_state(RemoteState::Offline).await;
-        let guard = context.remote.write().await;
-        assert!(!context.is_offline());
-        drop(guard);
-        assert!(context.is_offline());
-    }
-
-    #[tokio::test]
-    async fn from_result_classifies_no_remote_as_offline() {
-        let state = RemoteState::from_result(Err(no_remote()));
-        assert!(matches!(state, RemoteState::Offline));
-    }
-
-    #[tokio::test]
-    async fn from_result_classifies_other_errors_as_failed() {
-        let state = RemoteState::from_result(Err(disconnected()));
-        assert!(matches!(state, RemoteState::Failed(_)));
-    }
-
-    #[tokio::test]
-    async fn remote_returns_no_remote_for_offline_state() {
-        let ctx = context_with_state(RemoteState::Offline).await;
-        let result = ctx.remote().await;
-        assert!(matches!(result, Err(ProtocolError::NoRemote(_))));
-    }
-
-    #[tokio::test]
-    async fn remote_returns_original_error_for_failed_state() {
-        let ctx = context_with_state(RemoteState::Failed(disconnected())).await;
-        let result = ctx.remote().await;
-        assert!(matches!(result, Err(ProtocolError::Disconnected(_))));
-    }
-
-    #[tokio::test]
-    async fn pending_err_transitions_to_failed() {
-        let ctx = context_with_state(RemoteState::Pending(ready_remote(Err(disconnected())))).await;
-
-        // First call drives resolution.
-        let result = ctx.remote().await;
-        assert!(matches!(result, Err(ProtocolError::Disconnected(_))));
-
-        // State should now be promoted to terminal Failed — subsequent calls take the
-        // fast path (no Pending match in the read-lock branch).
-        let state = ctx.remote.read().await;
-        assert!(
-            matches!(*state, RemoteState::Failed(_)),
-            "state should be promoted to Failed after Pending resolution"
-        );
-    }
-
-    #[tokio::test]
-    async fn pending_no_remote_transitions_to_offline() {
-        let ctx = context_with_state(RemoteState::Pending(ready_remote(Err(no_remote())))).await;
-
-        let result = ctx.remote().await;
-        assert!(matches!(result, Err(ProtocolError::NoRemote(_))));
-
-        let state = ctx.remote.read().await;
-        assert!(
-            matches!(*state, RemoteState::Offline),
-            "NoRemote resolution should promote to Offline rather than Failed"
-        );
-    }
-
-    #[tokio::test]
-    async fn concurrent_awaiters_converge_on_single_resolution() {
-        // Use a future that resolves after a tick, so all spawned tasks have a chance
-        // to race on the Pending state before resolution completes.
-        let slow: BoxFuture<'static, _> = async {
-            tokio::task::yield_now().await;
-            tokio::task::yield_now().await;
-            Err::<Arc<lore_transport::Connection>, _>(disconnected())
-        }
-        .boxed();
-        let shared = slow.shared();
-        let ctx = context_with_state(RemoteState::Pending(shared)).await;
-
-        // Spawn many concurrent callers. All should get the same error result.
-        let mut handles = Vec::new();
-        for _ in 0..16 {
-            let ctx = ctx.clone();
-            handles.push(tokio::spawn(async move { ctx.remote().await }));
-        }
-        for h in handles {
-            let result = h.await.expect("task should not panic");
-            assert!(matches!(result, Err(ProtocolError::Disconnected(_))));
-        }
-
-        // State should be promoted exactly once to the terminal result.
-        let state = ctx.remote.read().await;
-        assert!(matches!(*state, RemoteState::Failed(_)));
-    }
-
-    #[tokio::test]
-    async fn remote_status_reports_offline() {
-        let ctx = context_with_state(RemoteState::Offline).await;
-        assert!(matches!(
-            ctx.remote_status().await,
-            super::RemoteStatus::Offline
-        ));
-    }
-
-    #[tokio::test]
-    async fn remote_status_reports_failed() {
-        let ctx = context_with_state(RemoteState::Failed(disconnected())).await;
-        assert!(matches!(
-            ctx.remote_status().await,
-            super::RemoteStatus::Failed(ProtocolError::Disconnected(_))
-        ));
-    }
-
-    #[tokio::test]
-    async fn remote_status_reports_pending_without_driving_connect() {
-        // Use a future that would panic if polled, to prove remote_status never polls
-        // the shared future.
-        let never_poll: BoxFuture<'static, _> = async {
-            panic!("remote_status must not poll the pending future");
-        }
-        .boxed();
-        let ctx = context_with_state(RemoteState::Pending(never_poll.shared())).await;
-
-        assert!(matches!(
-            ctx.remote_status().await,
-            super::RemoteStatus::Pending
-        ));
-        // State must still be Pending — remote_status must not promote.
-        assert!(matches!(*ctx.remote.read().await, RemoteState::Pending(_)));
-    }
-
-    #[tokio::test]
-    async fn cancelled_awaiter_does_not_break_subsequent_callers() {
-        // Resolution waits for a signal so we can reliably cancel awaiters before it fires.
-        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-        let gated: BoxFuture<'static, _> = async move {
-            let _ = rx.await;
-            Err::<Arc<lore_transport::Connection>, _>(disconnected())
-        }
-        .boxed();
-        let shared = gated.shared();
-        let ctx = context_with_state(RemoteState::Pending(shared)).await;
-
-        // First caller registers a waker on the Shared future, then is cancelled.
-        let ctx_for_cancel = ctx.clone();
-        let cancelled = tokio::spawn(async move { ctx_for_cancel.remote().await });
-        tokio::task::yield_now().await;
-        cancelled.abort();
-        let _ = cancelled.await;
-
-        // Drive resolution.
-        tx.send(())
-            .expect("receiver should still be alive via the Shared future");
-
-        // A fresh caller should still get the resolved error and see the state promoted.
-        let result = ctx.remote().await;
-        assert!(matches!(result, Err(ProtocolError::Disconnected(_))));
-        let state = ctx.remote.read().await;
-        assert!(matches!(*state, RemoteState::Failed(_)));
-    }
-}
-
-#[cfg(test)]
-#[allow(clippy::disallowed_methods)]
-mod write_token_tests {
-    //! Regression coverage for `clone --no-tracking`: a `NoStore` context that
-    //! attaches the outer `Client` write token (held by clone for cross-thread
-    //! exclusion on the destination path) must grant write capability via
-    //! `try_write_mutable_store`. Without this, `branch::create`'s internal
-    //! helpers (`store_name_to_id`, `metadata_store`, `store_latest`) fail
-    //! with `WriteRequired`.
-    use std::sync::Arc;
-
-    use super::RepositoryContext;
-    use super::RepositoryWriteToken;
-    use crate::repository::test_helpers::default_repository_creation_args;
-
-    async fn in_memory_context() -> Arc<RepositoryContext> {
-        let (immutable, mutable) = super::create_client_memory_stores()
-            .await
-            .expect("in-memory stores should be creatable");
-        Arc::new(RepositoryContext::new(default_repository_creation_args(
-            immutable, mutable,
-        )))
-    }
-
-    /// A `NoStore` context with a `Client` write token attached must grant
-    /// write capability. This is the path `clone --no-tracking` takes: it
-    /// holds the per-path mutex via the outer Client token (clone.rs:877)
-    /// and shares siblings to every constructed context.
-    #[tokio::test]
-    async fn no_store_context_with_client_token_grants_write_capability() {
-        let temp_dir = lore_base::test_util::TempDir::new("lore-write-token-test-");
-        let token = RepositoryWriteToken::acquire(&temp_dir).await;
-        let ctx = in_memory_context().await;
-        let with_token = Arc::new(
-            Arc::try_unwrap(ctx)
-                .expect("sole owner")
-                .with_write_token(token),
-        );
-        assert!(
-            with_token.try_write_mutable_store().is_some(),
-            "context with Client token should expose a write handle"
-        );
-    }
-
-    /// Without an attached token, an in-memory context is read-only — confirms
-    /// that `repository_call_no_store` callers (e.g. `config_get`) keep their
-    /// fail-loud behavior on accidental writes.
-    #[tokio::test]
-    async fn no_token_means_no_write_capability() {
-        let ctx = in_memory_context().await;
-        assert!(
-            ctx.try_write_mutable_store().is_none(),
-            "context without a token must not expose a write handle"
-        );
-    }
-}
-
-#[cfg(test)]
-#[allow(clippy::disallowed_methods)]
-mod path_optional_tests {
-    //! Coverage for the path-less `RepositoryContext` construction path used
-    //! by the in-memory revision-tree surface. The context's `path` field is
-    //! optional; when constructed with `None`, the context is fully usable
-    //! for store-backed operations but `require_path` rejects callers that
-    //! need a working-tree path.
-    use super::RepositoryContext;
-    use crate::repository::test_helpers::RepositoryContextCreationArgsExt;
-    use crate::repository::test_helpers::default_repository_creation_args;
-
-    #[tokio::test]
-    async fn require_path_returns_invalid_arguments_when_path_is_none() {
-        let (immutable, mutable) = super::create_client_memory_stores()
-            .await
-            .expect("in-memory stores should be creatable");
-        let ctx = RepositoryContext::new(default_repository_creation_args(immutable, mutable));
-        ctx.require_path()
-            .expect_err("path-less context should reject require_path");
-    }
-
-    #[tokio::test]
-    async fn require_path_returns_path_when_set() {
-        let (immutable, mutable) = super::create_client_memory_stores()
-            .await
-            .expect("in-memory stores should be creatable");
-        let path = std::path::PathBuf::from("/tmp/lore-test-require-path");
-        let ctx = RepositoryContext::new(
-            default_repository_creation_args(immutable, mutable).with_path(&path),
-        );
-        let got = ctx
-            .require_path()
-            .expect("path-bearing context should return path");
-        assert_eq!(got, path.as_path());
-    }
-}
-
-#[cfg(test)]
-mod root_text_tests {
-    //! Coverage for [`require_text_root`], the one place a working copy whose path has no
-    //! text spelling is refused.
-    use super::require_text_root;
-
-    #[test]
-    fn a_root_that_is_text_is_accepted() {
-        assert!(require_text_root(std::path::Path::new("/work/repository")).is_ok());
-    }
-
-    /// A root without a text spelling is refused where the working copy is opened, so no
-    /// path built from it is ever reported in a spelling it cannot be parsed back from.
-    #[cfg(target_family = "unix")]
-    #[test]
-    fn a_root_that_is_not_text_is_refused() {
-        use std::os::unix::ffi::OsStrExt;
-        let root = std::path::Path::new(std::ffi::OsStr::from_bytes(b"/work/\xff\xfe"));
-        assert!(
-            require_text_root(root).is_err(),
-            "a root with no text spelling must be refused"
-        );
-    }
-}
-
-#[cfg(test)]
-mod name_validation_tests {
-    //! Coverage for [`is_valid_name`], in particular the segment rules that keep
-    //! a name stable through the URL parsing in [`parse_url`].
-    use super::MAX_NAME_LEN;
-    use super::is_valid_name;
-    use super::parse_url;
-
-    #[test]
-    fn accepts_names_with_dots_inside_segments() {
-        for name in ["my-repo", "org/my-repo", "my.repo", "org/v1.2/repo_a"] {
-            assert!(is_valid_name(name), "{name} should be valid");
-        }
-    }
-
-    #[test]
-    fn rejects_dot_segments() {
-        for name in [".", "..", "./repo", "org/../other", "org/repo/..", "../.."] {
-            assert!(!is_valid_name(name), "{name} should be rejected");
-        }
-    }
-
-    #[test]
-    fn rejects_dot_leading_segments() {
-        // Not just the traversal-like `.` and `..`: any leading dot is rejected.
-        for name in [
-            "...",
-            ".hidden",
-            ".lore",
-            "org/...",
-            "org/.git",
-            "org/.git/repo",
-        ] {
-            assert!(!is_valid_name(name), "{name} should be rejected");
-        }
-    }
-
-    #[test]
-    fn rejects_empty_segments() {
-        for name in ["", "/", "//", "/repo", "repo/", "repo//", "org//repo"] {
-            assert!(!is_valid_name(name), "{name} should be rejected");
-        }
-    }
-
-    #[test]
-    fn rejects_disallowed_characters_and_oversized_names() {
-        for name in ["repo name", "org\\repo", "repo!", "org/repö"] {
-            assert!(!is_valid_name(name), "{name} should be rejected");
-        }
-        assert!(is_valid_name(&"a".repeat(MAX_NAME_LEN)));
-        assert!(!is_valid_name(&"a".repeat(MAX_NAME_LEN + 1)));
-    }
-
-    #[test]
-    fn every_valid_name_survives_url_parsing() {
-        // The point of the segment rules: a valid name is returned unchanged by
-        // `parse_url`, so the repository a client asks for is the one it created.
-        for name in ["repo", "org/repo", "org/v1.2/repo_a", "org/a.b.c/d-e"] {
-            let (_remote_url, parsed) = parse_url(&format!("lores://host/{name}"), false)
-                .unwrap_or_else(|err| panic!("{name} should parse: {err}"));
-            assert_eq!(parsed, name);
-        }
-    }
-
-    #[test]
-    fn rejected_names_are_the_ones_url_parsing_rewrites() {
-        // Each of these either loses the name or resolves to a different one.
-        // Tested because the parse_url logic dictates what kind of names we can allow.
-        // If parse_url changes, the is_valid_name logic needs to be re-evaluated.
-        for (url_name, parsed_as) in [
-            (".", ""),
-            ("..", ""),
-            ("org/../other", "other"),
-            ("./repo", "repo"),
-            ("repo/", "repo"),
-            ("/repo/test//", "repo/test"),
-        ] {
-            assert!(!is_valid_name(url_name), "{url_name} should be rejected");
-            let parsed = parse_url(&format!("lores://host/{url_name}"), false)
-                .map(|(_remote_url, name)| name)
-                .unwrap_or_default();
-            assert_eq!(parsed, parsed_as, "for {url_name}");
-        }
     }
 }

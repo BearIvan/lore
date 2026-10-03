@@ -6,6 +6,7 @@ publish = false
 
 [lib]
 name = "lore_revision"
+test = false
 
 [dependencies]
 async-stream = { workspace = true }
@@ -71,6 +72,7 @@ windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Storage
 # The non-self-describing format an event crosses the service boundary in.
 bitcode = { workspace = true }
 lore-base = { workspace = true, features = ["test-util"] }
+lore-revision = { workspace = true, features = ["test-util"] }
 lore-storage = { workspace = true }
 serde_json = { workspace = true }
 serde = { workspace = true }
@@ -86,6 +88,7 @@ seeding = []
 trace_log = ["lore-base/trace_log"]
 vfs = []
 swfs = []
+test-util = []
 
 [[test]]
 name = "compile_fail"

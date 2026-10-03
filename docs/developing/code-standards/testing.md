@@ -77,6 +77,8 @@ Put helpers that only the crate's own tests use in `tests/unit/` as well, as mod
 
 Helpers that other crates' tests use are the exception. Another crate cannot import a module from `tests/`, so these live in the library behind the crate's `test-util` feature, as `lore_base::test_util::TempDir` does (see [Scratch space on disk](#scratch-space-on-disk)).
 
+So is a test double that library code has to name itself, such as the type behind a variant of a closed enum. It lives in the library behind `test-util` as well, as `lore_revision::fs::filesystem_provider::test_util::TestOperation` does, and the rest of the fixture stays in `tests/unit/`.
+
 ### When a test needs something private
 
 Look for the public way first: a trait method, a constructor, a re-export. A test that needs private access often checks an implementation detail.

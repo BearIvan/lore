@@ -2815,6 +2815,7 @@ dependencies = [
  "lore-io",
  "lore-macro",
  "lore-proto",
+ "lore-revision",
  "lore-storage",
  "lore-telemetry",
  "lore-transport",
