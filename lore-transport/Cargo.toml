@@ -6,6 +6,7 @@ publish = false
 
 [lib]
 name = "lore_transport"
+test = false
 
 [dependencies]
 lore-base = { workspace = true }
@@ -36,6 +37,11 @@ tower = { workspace = true }
 url = { workspace = true }
 webpki-roots = { workspace = true }
 zerocopy = { workspace = true }
+lore-macro = { workspace = true }
 
 [features]
 trace_log = ["lore-base/trace_log"]
+test-util = []
+
+[dev-dependencies]
+lore-transport = { workspace = true, features = ["test-util"] }
