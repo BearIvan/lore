@@ -62,6 +62,7 @@ fn oidc_to_proto(oidc: &lore_transport::Oidc) -> Oidc {
     }
 }
 
+#[lore_macro::test_pub]
 fn environment_to_proto(
     environment: &lore_revision::environment::EnvironmentConfig,
 ) -> Environment {
@@ -110,41 +111,5 @@ impl EnvironmentService for LoreEnvironmentV1Service {
         Ok(Response::new(EnvironmentGetResponse {
             environment: Some(self.environment.clone()),
         }))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use lore_proto::lore::environment::v1::environment_service_server::EnvironmentServiceServer;
-
-    use super::*;
-
-    #[allow(dead_code)]
-    fn assert_implements_trait(
-        service: LoreEnvironmentV1Service,
-    ) -> EnvironmentServiceServer<LoreEnvironmentV1Service> {
-        EnvironmentServiceServer::new(service)
-    }
-
-    #[test]
-    fn the_provider_is_advertised_only_when_resolved() {
-        let mut environment = lore_revision::environment::EnvironmentConfig::default();
-        assert_eq!(environment_to_proto(&environment).oidc, None);
-
-        environment.oidc = Some(lore_transport::Oidc {
-            issuer: "https://auth.example.com".to_string(),
-            client_id: "lore-cli".to_string(),
-            identity_claim: Some("sub".to_string()),
-            ..Default::default()
-        });
-        assert_eq!(
-            environment_to_proto(&environment).oidc,
-            Some(Oidc {
-                issuer: "https://auth.example.com".to_string(),
-                client_id: "lore-cli".to_string(),
-                identity_claim: "sub".to_string(),
-                ..Default::default()
-            })
-        );
     }
 }

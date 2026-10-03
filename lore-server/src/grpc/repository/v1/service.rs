@@ -204,20 +204,3 @@ impl RepositoryService for LoreRepositoryV1Service {
         .await
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use lore_proto::lore::repository::v1::repository_service_server::RepositoryServiceServer;
-
-    use super::*;
-
-    /// Compile-time check that `LoreRepositoryV1Service` fully implements
-    /// the generated `RepositoryService` trait — wrapping it in
-    /// `RepositoryServiceServer` requires the trait bound to hold.
-    #[allow(dead_code)]
-    fn assert_implements_trait(
-        service: LoreRepositoryV1Service,
-    ) -> RepositoryServiceServer<LoreRepositoryV1Service> {
-        RepositoryServiceServer::new(service)
-    }
-}

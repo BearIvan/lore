@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: MIT
 //! Shared helpers for the HTTP module's tests.
 
-use crate::http::security_headers::ContentTypeAllowlist;
-use crate::http::security_headers::ContentTypePolicy;
-use crate::http::server::PresignConfig;
+use lore_server::http::security_headers::ContentTypeAllowlist;
+use lore_server::http::security_headers::ContentTypePolicy;
+use lore_server::http::server::PresignConfig;
 
 pub(crate) fn content_type_policy(extra: &[&str], denied: &[&str]) -> ContentTypePolicy {
     ContentTypePolicy {

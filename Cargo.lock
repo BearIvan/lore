@@ -2886,6 +2886,7 @@ dependencies = [
  "lore-notification",
  "lore-proto",
  "lore-revision",
+ "lore-server",
  "lore-storage",
  "lore-telemetry",
  "lore-transport",
