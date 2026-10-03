@@ -2574,6 +2574,7 @@ dependencies = [
  "lore-base",
  "lore-error-set",
  "lore-io",
+ "lore-macro",
  "parking_lot",
  "pin-project",
  "rand",
