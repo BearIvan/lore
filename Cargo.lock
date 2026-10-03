@@ -2646,6 +2646,7 @@ dependencies = [
  "jsonwebtoken",
  "keyring",
  "lore-base",
+ "lore-credential",
  "lore-error-set",
  "ring",
  "serde",
