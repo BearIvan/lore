@@ -7,6 +7,16 @@ Release notes for the open source Lore project. Releases before v0.8.4 predate t
 
 ### Breaking changes
 
+### Features
+
+### Fixes & Improvements
+
+- The vendored `quinn-proto` moves to 0.11.15, bounding how many chunks the stream assembler retains. A peer sending out-of-order stream fragments with many gaps could drive the receiving connection's memory through per-fragment overhead that the byte-based receive windows do not account for, which is remote and needs no credentials (CVE-2026-25800). The local `max_rtt` and `TransportErrorCode::is_crypto` additions carry over unchanged, and the transport-parameter parsing fix Lore had been carrying as a local patch is now upstream
+
+## v0.10.1 (Oct 5th 2026) [#1475]
+
+### Breaking changes
+
 - `lore.thin_client.v1`: `DiffChange.content_from` / `content_to` and `ContentDiffRequest.address_from` / `address_to` / `address_base` become a `lore.model.v1.Address`, the form `TreeNode.address` already carried, and move to field numbers 10 and 11, and 8, 9 and 10; the hash-only `bytes` fields they replace (5 and 6, and 1 through 3) are reserved. A committed file's content resolves under a context generated per file, so a consumer keying content and metadata lookups on `hash-context` found nothing for any file in a diff, and had nowhere to put the context when asking `ContentDiff` for the file's text. A side that does not exist reports the field unset: an ADD has no from side and a DELETE no to side. A link pin change addresses each of its revisions under the linked repository. A consumer built against the old fields reads the new ones as absent rather than as a hash, so rebuild against the new bindings
 - C API: every storage `*_ITEM_COMPLETE` event replaces `error_code` with an `error` detail carrying the failure's own FFI code, message and trace, as `Complete` already did, and the call's `status` becomes the dominant item failure's code. Re-check any branch on a per-item code: a missing payload reports `PayloadNotFound` (81) rather than `AddressNotFound` (80), a buffer short of the content reports `Oversized` (118) rather than `InvalidArguments` (3), and most failures previously reported as `Internal` now report their own code. The structs grow and are no longer trivially copyable, so copy the detail's strings before the callback returns and rebuild against the new `lore.h`. The revision-tree per-item events are unchanged: they still carry `error_code` as a `lore_error_code_t`, so the five-value folding still applies to them, and moving them to a detail will need a second rebuild in a later release
 - C API: an empty `lore_string_t` the library emits now carries a NULL `string` pointer rather than a pointer to a zero-length NUL-terminated buffer, which is what `lore_string_t` has always documented and what an empty `lore_array_t` already answers. A consumer that read `string` without first checking `length` — `strlen(s.string)`, `printf("%s", s.string)` — must check `length`, or treat NULL as the empty string. This applies to every empty string on every event and every verb, not one field
@@ -57,7 +67,6 @@ Release notes for the open source Lore project. Releases before v0.8.4 predate t
 - `lore-server`: permission checks are refused with `PERMISSION_DENIED` when access is checked against the grpc auth service, rather than `INTERNAL`
 - Fix `lore push` slowing quadratically with the number of entries in a changed directory. The push and its server-side verification pair entries in a single pass over name-sorted lists
 - Fix `lore stage` staging a delete for a removed file or directory that was never committed, which `lore status` reported as `D` and, after `lore unstage`, as an untracked `A`. `lore sync` no longer refuses to run after `lore file dirty` drops such a file
-- The vendored `quinn-proto` moves to 0.11.15, bounding how many chunks the stream assembler retains. A peer sending out-of-order stream fragments with many gaps could drive the receiving connection's memory through per-fragment overhead that the byte-based receive windows do not account for, which is remote and needs no credentials (CVE-2026-25800). The local `max_rtt` and `TransportErrorCode::is_crypto` additions carry over unchanged, and the transport-parameter parsing fix Lore had been carrying as a local patch is now upstream
 
 ## v0.10.0 (Sep 17th 2026) [#1170]
 
