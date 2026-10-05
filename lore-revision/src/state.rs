@@ -825,219 +825,21 @@ impl State {
             )
         };
 
-        let mut tree = self.tree(repository.clone()).await?;
-        let block_count = tree.block_count as usize;
+        // Each phase reads the tree again where it updates it, rather than sharing a copy: a copy
+        // would be held across every write.
+        let block_count = self.tree(repository.clone()).await?.block_count as usize;
 
         if !block_dirty.is_empty() {
-            lore_debug!("Serializing {} dirty blocks", block_dirty.len());
-            let mut tasks: JoinSet<Result<(Address, usize), StateError>> = JoinSet::new();
-            for (block, block_index) in block_dirty.iter() {
-                let block = block.clone();
-                let block_index = *block_index;
-                if block.read().has_first_unused_node() {
-                    let block_unused_next = tree.block_unused_first;
-                    tree.block_unused_first = block_index as u32;
-                    block.write().node_block().block_unused_next = block_unused_next;
-                }
-                lore_trace!("Queue serialization of dirty node block {}", block_index);
-                let repository = repository.clone();
-                lore_spawn!(tasks, async move {
-                    lore_trace!("Serializing dirty node block {}", block_index);
-                    let node_block = {
-                        block.deserialize_nametable(repository.clone()).await?;
-                        block.node_name_repack();
-                        if block.is_nametable_deserialized() {
-                            lore_trace!("Serializing dirty node block {} name table", block_index);
-                            let name_table = {
-                                let reader = block.read_owned();
-                                if reader.name_table().is_empty() {
-                                    Address::default()
-                                } else {
-                                    immutable::write_borrowed(
-                                        repository.clone(),
-                                        Context::default(),
-                                        reader.name_table(),
-                                        immutable::write_options_from_repository(
-                                            repository.clone(),
-                                        )
-                                        .with_local_cache_priority()
-                                        .with_max_size_chunk(),
-                                    )
-                                    .await
-                                    .forward::<StateError>("Failed to serialize node block")?
-                                }
-                            };
-                            {
-                                let mut writer = block.write();
-                                writer.node_block().name_table = name_table.hash;
-                            }
-                        }
-                        block.read_owned()
-                    };
-                    let address = node_block
-                        .node_block()
-                        .write_to_immutable(
-                            repository.clone(),
-                            Context::default(),
-                            immutable::write_options_from_repository(repository.clone())
-                                .with_local_cache_priority()
-                                .with_max_size_chunk(),
-                        )
-                        .await
-                        .forward::<StateError>("Failed to serialize node block")?;
-                    Ok((address, block_index))
-                });
-            }
-
-            let mut block_hash_bytes = {
-                let lock = self.runtime.read();
-                // Resize buffer with empty hashes if needed
-                lock.block_address
-                    .clone_and_resize_zeroed::<Hash>(block_count)
-            };
-            {
-                let block_hash = block_hash_bytes.as_type_slice_mut();
-
-                let mut final_error = Ok(());
-                let mut task_error = Ok(());
-                while let Some(task) = tasks.join_next().await {
-                    if let Ok(result) = task {
-                        if let Ok((address, block_index)) = result {
-                            block_hash[block_index] = address.hash;
-                        } else {
-                            final_error = Err(result.unwrap_err());
-                        }
-                    } else {
-                        task_error = Err(StateError::internal_with_context(
-                            task.unwrap_err(),
-                            "Failed to serialize node block task",
-                        ));
-                    }
-                }
-                final_error?;
-                task_error?;
-            }
-
-            // Write out the block address list
-            let block_hash_bytes = block_hash_bytes.freeze();
-            let list_address = immutable::write(
-                repository.clone(),
-                Context::default(),
-                block_hash_bytes.clone(),
-                immutable::write_options_from_repository(repository.clone())
-                    .with_local_cache_priority()
-                    .with_max_size_chunk(),
-            )
-            .await
-            .forward::<StateError>("Failed to serialize node block list")?;
-
-            // Update the tree node block list address
-            {
-                lore_trace!(
-                    "Update tree node block list from {} to {}",
-                    tree.hash_node,
-                    list_address.hash
-                );
-                tree.hash_node = list_address.hash;
-                tree.flags |= TreeFlags::Dirty;
-                {
-                    let mut lock = self.runtime.write();
-                    lock.tree = Some(tree);
-                    lock.block_address = block_hash_bytes;
-                }
-            }
+            self.serialize_node_blocks(&repository, &block_dirty, block_count)
+                .await?;
         }
-
         if !block_file_metadata_dirty.is_empty() {
-            lore_trace!(
-                "Serializing {} dirty file metadata blocks",
-                block_file_metadata_dirty.len()
-            );
-            let mut tasks: JoinSet<Result<(Address, usize), StateError>> = JoinSet::new();
-            for (block, block_index) in block_file_metadata_dirty.iter() {
-                let block = block.clone();
-                let block_index = *block_index;
-                let repository = repository.clone();
-                lore_trace!(
-                    "Queue serialization of dirty file metadata node block {}",
-                    block_index
-                );
-
-                lore_spawn!(tasks, async move {
-                    lore_trace!("Serializing dirty file metadata node block {}", block_index);
-                    let node_block = block.read_owned();
-                    let address = node_block
-                        .node_block()
-                        .write_to_immutable(
-                            repository.clone(),
-                            Context::default(),
-                            immutable::write_options_from_repository(repository.clone())
-                                .with_local_cache_priority()
-                                .with_max_size_chunk(),
-                        )
-                        .await
-                        .forward::<StateError>("Failed to serialize file metadata block")?;
-                    Ok((address, block_index))
-                });
-            }
-
-            let mut block_hash_bytes = {
-                let lock = self.runtime.read();
-                // Resize buffer with empty hashes if needed
-                lock.block_file_metadata_address
-                    .clone_and_resize_zeroed::<Hash>(block_count)
-            };
-            {
-                let block_hash = block_hash_bytes.as_type_slice_mut();
-
-                let mut final_error = Ok(());
-                let mut task_error = Ok(());
-                while let Some(task) = tasks.join_next().await {
-                    if let Ok(result) = task {
-                        if let Ok((address, block_index)) = result {
-                            block_hash[block_index] = address.hash;
-                        } else {
-                            final_error = Err(result.unwrap_err());
-                        }
-                    } else {
-                        task_error = Err(StateError::internal_with_context(
-                            task.unwrap_err(),
-                            "Failed to serialize file metadata block task",
-                        ));
-                    }
-                }
-                final_error?;
-                task_error?;
-            }
-
-            // Write out the block address list
-            let block_hash_bytes = block_hash_bytes.freeze();
-            let list_address = immutable::write(
-                repository.clone(),
-                Context::default(),
-                block_hash_bytes.clone(),
-                immutable::write_options_from_repository(repository.clone())
-                    .with_local_cache_priority()
-                    .with_max_size_chunk(),
+            self.serialize_file_metadata_blocks(
+                &repository,
+                &block_file_metadata_dirty,
+                block_count,
             )
-            .await
-            .forward::<StateError>("Failed to serialize file metadata block list")?;
-
-            // Update the tree file metadata node block list address
-            {
-                lore_trace!(
-                    "Update tree file metadata node block list from {} to {}",
-                    tree.hash_file_metadata,
-                    list_address.hash
-                );
-                tree.hash_file_metadata = list_address.hash;
-                tree.flags |= TreeFlags::Dirty;
-                {
-                    let mut lock = self.runtime.write();
-                    lock.tree = Some(tree);
-                    lock.block_file_metadata_address = block_hash_bytes;
-                }
-            }
+            .await?;
         }
 
         let link_list = { self.runtime.read().link_list.clone() };
@@ -1070,29 +872,7 @@ impl State {
             }
         }
 
-        // Serialize the immutable tree
-        let tree = { self.runtime.read().tree.unwrap_or_default() };
-        if tree.flags & TreeFlags::Dirty != 0 {
-            lore_trace!("Serializing dirty tree");
-            let address = tree
-                .write_to_immutable(
-                    repository.clone(),
-                    Context::default(),
-                    immutable::write_options_from_repository(repository.clone())
-                        .with_local_cache_priority()
-                        .with_max_size_chunk(),
-                )
-                .await
-                .forward::<StateError>("Failed to serialize tree")?;
-            {
-                lore_trace!("Serialized tree to {}", address.hash);
-                lore_trace!("  node block {}", tree.hash_node);
-                lore_trace!("  file metadata block {}", tree.hash_file_metadata);
-                let mut data = self.data.write();
-                data.hash_tree = address.hash;
-                data.flags |= StateFlags::Dirty;
-            }
-        }
+        self.serialize_tree(&repository).await?;
 
         // Serialize the state
         let address = {
@@ -1132,6 +912,267 @@ impl State {
         );
 
         Ok(address.hash)
+    }
+
+    /// Writes the dirty node blocks and the list of their addresses, and points the tree at the
+    /// list.
+    ///
+    /// Its own future, as are the other phases of [`Self::serialize`]: inline, what each phase
+    /// holds across its awaits would be reserved in every state of it.
+    async fn serialize_node_blocks(
+        &self,
+        repository: &Arc<RepositoryContext>,
+        block_dirty: &[(Arc<NodeBlock>, usize)],
+        block_count: usize,
+    ) -> Result<(), StateError> {
+        lore_debug!("Serializing {} dirty blocks", block_dirty.len());
+        let mut block_unused_first = self.tree_readonly()?.block_unused_first;
+        let mut tasks: JoinSet<Result<(Address, usize), StateError>> = JoinSet::new();
+        for (block, block_index) in block_dirty.iter() {
+            let block = block.clone();
+            let block_index = *block_index;
+            if block.read().has_first_unused_node() {
+                block.write().node_block().block_unused_next = block_unused_first;
+                block_unused_first = block_index as u32;
+            }
+            lore_trace!("Queue serialization of dirty node block {}", block_index);
+            let repository = repository.clone();
+            lore_spawn!(tasks, async move {
+                lore_trace!("Serializing dirty node block {}", block_index);
+                let node_block = {
+                    block.deserialize_nametable(repository.clone()).await?;
+                    block.node_name_repack();
+                    if block.is_nametable_deserialized() {
+                        lore_trace!("Serializing dirty node block {} name table", block_index);
+                        let name_table = {
+                            let reader = block.read_owned();
+                            if reader.name_table().is_empty() {
+                                Address::default()
+                            } else {
+                                immutable::write_borrowed(
+                                    repository.clone(),
+                                    Context::default(),
+                                    reader.name_table(),
+                                    immutable::write_options_from_repository(repository.clone())
+                                        .with_local_cache_priority()
+                                        .with_max_size_chunk(),
+                                )
+                                .await
+                                .forward::<StateError>("Failed to serialize node block")?
+                            }
+                        };
+                        {
+                            let mut writer = block.write();
+                            writer.node_block().name_table = name_table.hash;
+                        }
+                    }
+                    block.read_owned()
+                };
+                let address = node_block
+                    .node_block()
+                    .write_to_immutable(
+                        repository.clone(),
+                        Context::default(),
+                        immutable::write_options_from_repository(repository.clone())
+                            .with_local_cache_priority()
+                            .with_max_size_chunk(),
+                    )
+                    .await
+                    .forward::<StateError>("Failed to serialize node block")?;
+                Ok((address, block_index))
+            });
+        }
+
+        let mut block_hash_bytes = {
+            let lock = self.runtime.read();
+            // Resize buffer with empty hashes if needed
+            lock.block_address
+                .clone_and_resize_zeroed::<Hash>(block_count)
+        };
+        {
+            let block_hash = block_hash_bytes.as_type_slice_mut();
+
+            let mut final_error = Ok(());
+            let mut task_error = Ok(());
+            while let Some(task) = tasks.join_next().await {
+                if let Ok(result) = task {
+                    if let Ok((address, block_index)) = result {
+                        block_hash[block_index] = address.hash;
+                    } else {
+                        final_error = Err(result.unwrap_err());
+                    }
+                } else {
+                    task_error = Err(StateError::internal_with_context(
+                        task.unwrap_err(),
+                        "Failed to serialize node block task",
+                    ));
+                }
+            }
+            final_error?;
+            task_error?;
+        }
+
+        // Write out the block address list
+        let block_hash_bytes = block_hash_bytes.freeze();
+        let list_address = immutable::write(
+            repository.clone(),
+            Context::default(),
+            block_hash_bytes.clone(),
+            immutable::write_options_from_repository(repository.clone())
+                .with_local_cache_priority()
+                .with_max_size_chunk(),
+        )
+        .await
+        .forward::<StateError>("Failed to serialize node block list")?;
+
+        // Update the tree node block list address
+        {
+            let mut tree = self.tree_readonly()?;
+            lore_trace!(
+                "Update tree node block list from {} to {}",
+                tree.hash_node,
+                list_address.hash
+            );
+            tree.block_unused_first = block_unused_first;
+            tree.hash_node = list_address.hash;
+            tree.flags |= TreeFlags::Dirty;
+            {
+                let mut lock = self.runtime.write();
+                lock.tree = Some(tree);
+                lock.block_address = block_hash_bytes;
+            }
+        }
+        Ok(())
+    }
+
+    /// Writes the dirty file metadata blocks and the list of their addresses, and points the tree
+    /// at the list.
+    async fn serialize_file_metadata_blocks(
+        &self,
+        repository: &Arc<RepositoryContext>,
+        block_file_metadata_dirty: &[(Arc<NodeFileMetadataBlock>, usize)],
+        block_count: usize,
+    ) -> Result<(), StateError> {
+        lore_trace!(
+            "Serializing {} dirty file metadata blocks",
+            block_file_metadata_dirty.len()
+        );
+        let mut tasks: JoinSet<Result<(Address, usize), StateError>> = JoinSet::new();
+        for (block, block_index) in block_file_metadata_dirty.iter() {
+            let block = block.clone();
+            let block_index = *block_index;
+            let repository = repository.clone();
+            lore_trace!(
+                "Queue serialization of dirty file metadata node block {}",
+                block_index
+            );
+
+            lore_spawn!(tasks, async move {
+                lore_trace!("Serializing dirty file metadata node block {}", block_index);
+                let node_block = block.read_owned();
+                let address = node_block
+                    .node_block()
+                    .write_to_immutable(
+                        repository.clone(),
+                        Context::default(),
+                        immutable::write_options_from_repository(repository.clone())
+                            .with_local_cache_priority()
+                            .with_max_size_chunk(),
+                    )
+                    .await
+                    .forward::<StateError>("Failed to serialize file metadata block")?;
+                Ok((address, block_index))
+            });
+        }
+
+        let mut block_hash_bytes = {
+            let lock = self.runtime.read();
+            // Resize buffer with empty hashes if needed
+            lock.block_file_metadata_address
+                .clone_and_resize_zeroed::<Hash>(block_count)
+        };
+        {
+            let block_hash = block_hash_bytes.as_type_slice_mut();
+
+            let mut final_error = Ok(());
+            let mut task_error = Ok(());
+            while let Some(task) = tasks.join_next().await {
+                if let Ok(result) = task {
+                    if let Ok((address, block_index)) = result {
+                        block_hash[block_index] = address.hash;
+                    } else {
+                        final_error = Err(result.unwrap_err());
+                    }
+                } else {
+                    task_error = Err(StateError::internal_with_context(
+                        task.unwrap_err(),
+                        "Failed to serialize file metadata block task",
+                    ));
+                }
+            }
+            final_error?;
+            task_error?;
+        }
+
+        // Write out the block address list
+        let block_hash_bytes = block_hash_bytes.freeze();
+        let list_address = immutable::write(
+            repository.clone(),
+            Context::default(),
+            block_hash_bytes.clone(),
+            immutable::write_options_from_repository(repository.clone())
+                .with_local_cache_priority()
+                .with_max_size_chunk(),
+        )
+        .await
+        .forward::<StateError>("Failed to serialize file metadata block list")?;
+
+        // Update the tree file metadata node block list address
+        {
+            let mut tree = self.tree_readonly()?;
+            lore_trace!(
+                "Update tree file metadata node block list from {} to {}",
+                tree.hash_file_metadata,
+                list_address.hash
+            );
+            tree.hash_file_metadata = list_address.hash;
+            tree.flags |= TreeFlags::Dirty;
+            {
+                let mut lock = self.runtime.write();
+                lock.tree = Some(tree);
+                lock.block_file_metadata_address = block_hash_bytes;
+            }
+        }
+        Ok(())
+    }
+
+    /// Writes the tree to the immutable store if it is dirty, and points the state at it.
+    ///
+    /// Its own future, so that the copy of the tree it writes from is not held in every state
+    /// of [`Self::serialize`].
+    async fn serialize_tree(&self, repository: &Arc<RepositoryContext>) -> Result<(), StateError> {
+        let tree = { self.runtime.read().tree.unwrap_or_default() };
+        if tree.flags & TreeFlags::Dirty == 0 {
+            return Ok(());
+        }
+        lore_trace!("Serializing dirty tree");
+        let address = tree
+            .write_to_immutable(
+                repository.clone(),
+                Context::default(),
+                immutable::write_options_from_repository(repository.clone())
+                    .with_local_cache_priority()
+                    .with_max_size_chunk(),
+            )
+            .await
+            .forward::<StateError>("Failed to serialize tree")?;
+        lore_trace!("Serialized tree to {}", address.hash);
+        lore_trace!("  node block {}", tree.hash_node);
+        lore_trace!("  file metadata block {}", tree.hash_file_metadata);
+        let mut data = self.data.write();
+        data.hash_tree = address.hash;
+        data.flags |= StateFlags::Dirty;
+        Ok(())
     }
 
     /// Drop the written blocks' dirty flags and registrations, so the state matches the
