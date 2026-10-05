@@ -7582,6 +7582,7 @@ fn collect_diff_addresses(from: Vec<Address>, to: Vec<Address>) -> Vec<Address> 
     new
 }
 
+/// Returns sorted and deduplicated addresses
 pub async fn collect_new_fragments(
     repository: Arc<RepositoryContext>,
     state_from: Arc<State>,
