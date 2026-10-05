@@ -57,6 +57,7 @@ Release notes for the open source Lore project. Releases before v0.8.4 predate t
 - `lore-server`: permission checks are refused with `PERMISSION_DENIED` when access is checked against the grpc auth service, rather than `INTERNAL`
 - Fix `lore push` slowing quadratically with the number of entries in a changed directory. The push and its server-side verification pair entries in a single pass over name-sorted lists
 - Fix `lore stage` staging a delete for a removed file or directory that was never committed, which `lore status` reported as `D` and, after `lore unstage`, as an untracked `A`. `lore sync` no longer refuses to run after `lore file dirty` drops such a file
+- The vendored `quinn-proto` moves to 0.11.15, bounding how many chunks the stream assembler retains. A peer sending out-of-order stream fragments with many gaps could drive the receiving connection's memory through per-fragment overhead that the byte-based receive windows do not account for, which is remote and needs no credentials (CVE-2026-25800). The local `max_rtt` and `TransportErrorCode::is_crypto` additions carry over unchanged, and the transport-parameter parsing fix Lore had been carrying as a local patch is now upstream
 
 ## v0.10.0 (Sep 17th 2026) [#1170]
 
