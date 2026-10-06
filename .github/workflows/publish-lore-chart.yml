@@ -1,0 +1,21 @@
+# SPDX-FileCopyrightText: 2026 Epic Games, Inc.
+# SPDX-License-Identifier: MIT
+
+# Placeholder for publishing contrib/helm to ghcr.io/epicgames/lore/charts.
+# The real workflow (on lore-chart-v* tags: package, push by digest, keyless
+# cosign) lands through a GitHub PR, which needs this file on the default
+# branch before its version can be dispatched from the PR branch and tested on
+# GitHub's runners. Manual dispatch only, and it publishes nothing.
+
+name: Publish Lore Helm chart
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Helm chart publishing is not implemented yet."
