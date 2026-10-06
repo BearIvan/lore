@@ -29,6 +29,7 @@ rcgen = { workspace = true }
 rustls = { workspace = true }
 rustls-native-certs = { workspace = true }
 serde = { workspace = true }
+smallvec = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-stream = { workspace = true }
@@ -39,9 +40,10 @@ webpki-roots = { workspace = true }
 zerocopy = { workspace = true }
 lore-macro = { workspace = true }
 
+[dev-dependencies]
+libc = { workspace = true }
+lore-transport = { workspace = true, features = ["test-util"] }
+
 [features]
 trace_log = ["lore-base/trace_log"]
 test-util = []
-
-[dev-dependencies]
-lore-transport = { workspace = true, features = ["test-util"] }
