@@ -17,6 +17,7 @@ use lore_storage::Partition;
 use lore_storage::error::StorageError;
 use lore_storage::fragment_flags::FragmentFlags;
 use lore_storage::hash;
+use lore_storage::immutable_store::CopyBehavior;
 use lore_storage::immutable_store::ImmutableStore;
 use lore_storage::immutable_store::StoreError;
 use lore_storage::local::immutable_store::ImmutableStoreSettings;
@@ -364,7 +365,7 @@ impl ImmutableStore for CountingReadStore {
         source_address: Address,
         destination_partition: Partition,
         destination_context: Context,
-        durable: bool,
+        behavior: CopyBehavior,
     ) -> Result<(), StoreError> {
         self.inner
             .clone()
@@ -373,7 +374,7 @@ impl ImmutableStore for CountingReadStore {
                 source_address,
                 destination_partition,
                 destination_context,
-                durable,
+                behavior,
             )
             .await
     }

@@ -2575,6 +2575,7 @@ mod block_single_flight {
     use lore_storage::StoreMatchResult;
     use lore_storage::StoreObliterateStats;
     use lore_storage::hash::hash_string;
+    use lore_storage::immutable_store::CopyBehavior;
     use lore_storage::local::immutable_store::LocalImmutableStore;
 
     use crate::tests::RepositoryContextCreationArgsExt;
@@ -2726,7 +2727,7 @@ mod block_single_flight {
             source_address: Address,
             destination_partition: Partition,
             destination_context: Context,
-            durable: bool,
+            behavior: CopyBehavior,
         ) -> Result<(), StoreError> {
             self.inner
                 .clone()
@@ -2735,7 +2736,7 @@ mod block_single_flight {
                     source_address,
                     destination_partition,
                     destination_context,
-                    durable,
+                    behavior,
                 )
                 .await
         }

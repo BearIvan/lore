@@ -37,6 +37,7 @@ mod storage_remote_tests {
     use lore_server::quic::tests::TestHandlerFactory;
     use lore_server::quic::tests::server_certs;
     use lore_server::settings::BaselineAccess;
+    use lore_storage::immutable_store::CopyBehavior;
     use lore_storage::local::immutable_store::ImmutableStoreCreateOptions;
     use lore_storage::local::immutable_store::ImmutableStoreSettings;
 
@@ -276,7 +277,7 @@ mod storage_remote_tests {
             source_address: lore_base::types::Address,
             destination_partition: lore_base::types::Partition,
             destination_context: lore_base::types::Context,
-            durable: bool,
+            behavior: CopyBehavior,
         ) -> Result<(), lore_storage::StoreError> {
             self.inner
                 .clone()
@@ -285,7 +286,7 @@ mod storage_remote_tests {
                     source_address,
                     destination_partition,
                     destination_context,
-                    durable,
+                    behavior,
                 )
                 .await
         }
@@ -6760,7 +6761,7 @@ mod storage_remote_tests {
             source_address: lore_base::types::Address,
             destination_partition: lore_base::types::Partition,
             destination_context: lore_base::types::Context,
-            durable: bool,
+            behavior: CopyBehavior,
         ) -> Result<(), lore_storage::StoreError> {
             self.inner
                 .clone()
@@ -6769,7 +6770,7 @@ mod storage_remote_tests {
                     source_address,
                     destination_partition,
                     destination_context,
-                    durable,
+                    behavior,
                 )
                 .await
         }
