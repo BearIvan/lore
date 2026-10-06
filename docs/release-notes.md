@@ -11,6 +11,7 @@ Release notes for the open source Lore project. Releases before v0.8.4 predate t
 
 ### Fixes & Improvements
 
+- `lore-server`: the `UrcAuthApi` and ReBAC clients dial `[environment.endpoint] auth_url` over TLS when it's configured to use the `ucs-auth://` scheme. The URL was previously handed to tonic unrewritten, which applies TLS only to a literal `https` scheme. This change makes the client->server and server->server grpc calls behave in the same manner.
 - The vendored `quinn-proto` moves to 0.11.15, bounding how many chunks the stream assembler retains. A peer sending out-of-order stream fragments with many gaps could drive the receiving connection's memory through per-fragment overhead that the byte-based receive windows do not account for, which is remote and needs no credentials (CVE-2026-25800). The local `max_rtt` and `TransportErrorCode::is_crypto` additions carry over unchanged, and the transport-parameter parsing fix Lore had been carrying as a local patch is now upstream
 
 ## v0.10.1 (Oct 5th 2026) [#1475]
