@@ -730,7 +730,7 @@ pub(crate) async fn stage_filesystem_path(
             "Path {} exist in repository, stage deletion",
             full_relative_path
         );
-        stage_delete(
+        stage_absent_delete(
             current_repository.clone(),
             node_state,
             full_relative_path.clone(),
@@ -1255,15 +1255,17 @@ async fn mark_staged_node_dirty(
         .forward::<StageError>("Failed to mark staged node as dirty")
 }
 
-pub(crate) async fn stage_delete(
-    repository: Arc<RepositoryContext>,
-    state: Arc<State>,
-    relative_path: RelativePath,
+/// Mark `node_id` staged for deletion, reporting the node when this call is the one that
+/// marked it so a caller walking the subtree knows whether it still has work below.
+async fn stage_delete_node(
+    repository: &Arc<RepositoryContext>,
+    state: &Arc<State>,
+    relative_path: &RelativePath,
     node_id: NodeID,
     node_flags: NodeFlags,
-    stats: Arc<StageStats>,
-    link_tracker: Option<Arc<crate::link::LinkTracker>>,
-) -> Result<(), StageError> {
+    stats: &Arc<StageStats>,
+    link_tracker: Option<&Arc<crate::link::LinkTracker>>,
+) -> Result<Option<Node>, StageError> {
     let block_index = NodeBlock::index(node_id);
     let node_index = Node::index(node_id);
     let block = state
@@ -1273,7 +1275,7 @@ pub(crate) async fn stage_delete(
 
     let node = block.node(node_index);
     if node.is_staged_delete() {
-        return Ok(());
+        return Ok(None);
     }
 
     lore_debug!("Stage delete of node {}", node_id);
@@ -1291,7 +1293,7 @@ pub(crate) async fn stage_delete(
         stats.file_delete_count.fetch_add(1, Ordering::Relaxed);
         event::LoreEvent::FileStageFile(LoreFileStageFileEventData {
             from_path: LoreString::default(),
-            path: LoreString::from(&relative_path),
+            path: LoreString::from(relative_path),
             action: LoreFileAction::Delete,
         })
         .send();
@@ -1312,16 +1314,42 @@ pub(crate) async fn stage_delete(
 
     mark_staged_node_dirty(
         repository.clone(),
-        &state,
+        state,
         node_id,
         NodeFlags::DirtyDelete,
         node_flags,
     )
     .await?;
 
-    if let Some(ref tracker) = link_tracker {
-        tracker.on_node_changed(&repository);
+    if let Some(tracker) = link_tracker {
+        tracker.on_node_changed(repository);
     }
+
+    Ok(Some(node))
+}
+
+pub(crate) async fn stage_delete(
+    repository: Arc<RepositoryContext>,
+    state: Arc<State>,
+    relative_path: RelativePath,
+    node_id: NodeID,
+    node_flags: NodeFlags,
+    stats: Arc<StageStats>,
+    link_tracker: Option<Arc<crate::link::LinkTracker>>,
+) -> Result<(), StageError> {
+    let Some(node) = stage_delete_node(
+        &repository,
+        &state,
+        &relative_path,
+        node_id,
+        node_flags,
+        &stats,
+        link_tracker.as_ref(),
+    )
+    .await?
+    else {
+        return Ok(());
+    };
 
     // Note that links do not need to recurse into directory, as the subtree exist in
     // the link state tree and not this state tree
@@ -1366,6 +1394,109 @@ fn stage_delete_recurse(
     link_tracker: Option<Arc<crate::link::LinkTracker>>,
 ) -> Pin<Box<dyn Future<Output = Result<(), StageError>> + Send>> {
     Box::pin(stage_delete(
+        repository,
+        state,
+        relative_path,
+        node_id,
+        node_flags,
+        stats,
+        link_tracker,
+    ))
+}
+
+/// Stage the deletion of `node_id`, which the file system does not hold, and report whether
+/// a link kept part of it.
+///
+/// A mount stays absent while the linked repository cannot be read, so the link and every
+/// directory on its path stay. A node already staged for deletion keeps nothing.
+async fn stage_absent_delete(
+    repository: Arc<RepositoryContext>,
+    state: Arc<State>,
+    relative_path: RelativePath,
+    node_id: NodeID,
+    node_flags: NodeFlags,
+    stats: Arc<StageStats>,
+    link_tracker: Option<Arc<crate::link::LinkTracker>>,
+) -> Result<bool, StageError> {
+    let node = state
+        .node(repository.clone(), node_id)
+        .await
+        .forward::<StageError>("Failed deserializing state node block")?;
+
+    if node.is_staged_delete() {
+        return Ok(false);
+    }
+
+    if node.is_link() {
+        lore_debug!("Link mount {relative_path} is absent from the file system, keeping the link");
+        return Ok(true);
+    }
+
+    if !node.is_directory() {
+        stage_delete_node(
+            &repository,
+            &state,
+            &relative_path,
+            node_id,
+            node_flags,
+            &stats,
+            link_tracker.as_ref(),
+        )
+        .await?;
+        return Ok(false);
+    }
+
+    let mut children =
+        StateNodeChildrenWithNameIterator::new(state.clone(), repository.clone(), node_id)
+            .await
+            .forward::<StageError>("Failed to list directory node children")?;
+
+    let mut kept_link = false;
+    while let Some((child_node_id, _child_node, child_name)) = children
+        .next()
+        .await
+        .forward::<StageError>("Failed to list directory node children")?
+    {
+        let child_path = relative_path.join(child_name);
+        kept_link |= stage_absent_delete_recurse(
+            repository.clone(),
+            state.clone(),
+            child_path,
+            child_node_id,
+            node_flags,
+            stats.clone(),
+            link_tracker.clone(),
+        )
+        .await?;
+    }
+
+    if kept_link {
+        return Ok(true);
+    }
+
+    stage_delete_node(
+        &repository,
+        &state,
+        &relative_path,
+        node_id,
+        node_flags,
+        &stats,
+        link_tracker.as_ref(),
+    )
+    .await?;
+    Ok(false)
+}
+
+fn stage_absent_delete_recurse(
+    repository: Arc<RepositoryContext>,
+    state: Arc<State>,
+    relative_path: RelativePath,
+    node_id: NodeID,
+    node_flags: NodeFlags,
+    stats: Arc<StageStats>,
+    link_tracker: Option<Arc<crate::link::LinkTracker>>,
+) -> Pin<Box<dyn Future<Output = Result<bool, StageError>> + Send>> {
+    Box::pin(stage_absent_delete(
         repository,
         state,
         relative_path,
@@ -1974,7 +2105,7 @@ pub(crate) async fn stage_directory(
             }
         }
 
-        let result = stage_delete(
+        let result = stage_absent_delete(
             repository.clone(),
             state.clone(),
             filter_path.clone().freeze(),

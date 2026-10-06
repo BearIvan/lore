@@ -6083,9 +6083,9 @@ pub struct LayerMountInfo {
     pub source_node: NodeID,
 }
 
-/// Information about a link mount in the current state, collected once per diff so
-/// the per-directory pass can detect "this filesystem directory is a link, not a fresh
-/// add" with a single linear `find` instead of an async block-walk per directory.
+/// Information about a link mount, collected once per diff so the per-directory pass
+/// can detect "this filesystem directory is a link, not a fresh add" with a single
+/// linear `find` instead of an async block-walk per directory.
 ///
 /// Only `target_path` is needed today because the link-mount handling skips
 /// recursion entirely (the link is the parent-tree change; its content is
@@ -6094,24 +6094,83 @@ pub struct LayerMountInfo {
 /// re-introducing the per-directory `find_node_link` lookup.
 pub struct LinkMountInfo {
     /// Parent-relative mount path of the link node (e.g. `"libs/shared"`).
-    pub target_path: String,
+    pub target_path: RelativePath,
 }
 
-/// Enumerate every link in `state` and resolve its parent-relative mount
-/// path. The result rides in `FilesystemDiffContext` by reference
-/// so the per-directory walk avoids an O(depth) block-walk per new directory
-/// on fresh checkouts.
-async fn collect_link_mounts(
+impl LinkMountInfo {
+    /// Whether any of `mounts` sits at or under `path`, which the repository root does.
+    ///
+    /// Case-insensitive, because node lookup is: a path a caller named resolves to the node a
+    /// mount hangs below however either is spelled.
+    pub(crate) fn any_under(mounts: &[LinkMountInfo], path: &RelativePath) -> bool {
+        if path.is_empty() {
+            return !mounts.is_empty();
+        }
+        mounts
+            .iter()
+            .any(|mount| path.covers_ignore_case(&mount.target_path))
+    }
+}
+
+/// Mount paths of the links `state` holds below `source_node`, spelled from `mount_path` the
+/// way the walk that crossed into it spells paths.
+pub(crate) async fn collect_link_mounts_below(
     state: &Arc<State>,
     repository: &Arc<RepositoryContext>,
+    source_node: NodeID,
+    mount_path: &RelativePath,
 ) -> Result<Vec<LinkMountInfo>, StateError> {
-    let link_list = state.link_list(repository.clone()).await?;
-    let mut mounts = Vec::with_capacity(link_list.len());
-    for link_ref in link_list.iter() {
-        let target_path = state
-            .node_path(repository.clone(), link_ref.local_node as NodeID)
-            .await?;
-        mounts.push(LinkMountInfo { target_path });
+    let mut mounts = Vec::new();
+    for link_ref in state.link_list(repository.clone()).await?.iter() {
+        // The list is a hint a walk consults, so an entry it cannot place is dropped.
+        let below = match state
+            .node_path_below(
+                repository.clone(),
+                link_ref.local_node as NodeID,
+                source_node,
+            )
+            .await
+        {
+            Ok(below) => below,
+            Err(err) => {
+                lore_debug!(
+                    "Link {} node {} resolves no mount path: {err}",
+                    link_ref.repository,
+                    link_ref.local_node
+                );
+                continue;
+            }
+        };
+        if let Some(below) = below.filter(|below| !below.is_empty()) {
+            mounts.push(LinkMountInfo {
+                target_path: mount_path.join(below.as_str()),
+            });
+        }
+    }
+    Ok(mounts)
+}
+
+/// Mount paths of the links the trees hold below the node named for each, spelled from
+/// `mount_path`, with one entry per path. The result rides in `FilesystemDiffContext` by
+/// reference so the per-directory walk avoids an O(depth) block-walk per new directory on
+/// fresh checkouts.
+///
+/// Every tree is read because a staged tree carries links no commit has recorded yet, and a
+/// link the walk crosses can be pinned to a different revision on each side.
+pub(crate) async fn collect_link_mounts(
+    trees: &[(&Arc<State>, &Arc<RepositoryContext>, NodeID)],
+    mount_path: &RelativePath,
+) -> Result<Vec<LinkMountInfo>, StateError> {
+    let mut mounts: Vec<LinkMountInfo> = Vec::new();
+    for (state, repository, source_node) in trees {
+        for mount in collect_link_mounts_below(state, repository, *source_node, mount_path).await? {
+            if !mounts
+                .iter()
+                .any(|seen| seen.target_path.as_str() == mount.target_path.as_str())
+            {
+                mounts.push(mount);
+            }
+        }
     }
     Ok(mounts)
 }
@@ -6174,7 +6233,16 @@ pub async fn diff_filesystem(
         None => FilterStates::ROOT,
     };
 
-    let link_mounts = Arc::new(collect_link_mounts(&state_current, &repository_current).await?);
+    let link_mounts = Arc::new(
+        collect_link_mounts(
+            &[
+                (&state_from, &repository_from, ROOT_NODE),
+                (&state_current, &repository_current, ROOT_NODE),
+            ],
+            &RelativePath::new(),
+        )
+        .await?,
+    );
 
     let Some(path) = path else {
         return Ok(diff_with(
@@ -6389,7 +6457,16 @@ pub async fn diff_filesystem_subtree(
     layer_mounts: Arc<Vec<LayerMountInfo>>,
 ) -> Result<ChangeStream<FilesystemDiffStats>, StateError> {
     let filter_mode = walk_filter_mode(filter_mode, intent);
-    let link_mounts = Arc::new(collect_link_mounts(&current.state, &current.repository).await?);
+    let link_mounts = Arc::new(
+        collect_link_mounts(
+            &[
+                (&from.state, &from.repository, ROOT_NODE),
+                (&current.state, &current.repository, ROOT_NODE),
+            ],
+            &RelativePath::new(),
+        )
+        .await?,
+    );
     let states = from.repository.filter.exclusion_states(&filesystem_path);
     Ok(diff_with(
         operation,
