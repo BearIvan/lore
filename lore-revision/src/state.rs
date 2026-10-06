@@ -1297,6 +1297,11 @@ impl State {
         self.data.read().hash_metadata
     }
 
+    /// The hash of the tree record, or zero when the state has no stored tree.
+    pub fn tree_hash(&self) -> Hash {
+        self.data.read().hash_tree
+    }
+
     pub fn set_metadata_hash(&self, metadata: Hash) {
         let mut data = self.data.write();
         data.hash_metadata = metadata;
@@ -4105,12 +4110,16 @@ impl State {
     ) -> Result<(), StateError> {
         let tree = self.tree(repository.clone()).await?;
 
-        let mut address = Vec::with_capacity(5);
+        let mut address = Vec::with_capacity(7);
 
+        // A remote can return the state and tree records without the local cache priority
+        // flag, so a read does not keep them. Cache them to keep the state readable offline.
+        address.push(Address::zero_context_hash(self.revision()));
         address.push(Address::zero_context_hash(tree.hash_node));
 
         {
             let data = self.data.read();
+            address.push(Address::zero_context_hash(data.hash_tree));
             address.push(Address::zero_context_hash(data.hash_metadata));
             address.push(Address::zero_context_hash(data.hash_link));
         }
