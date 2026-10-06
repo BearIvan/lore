@@ -373,7 +373,6 @@ impl QuicConnection {
                 .map_err(|_err| QuicClientError::StreamOpen)?;
             connection.writer.push(Arc::new(Mutex::new(send)));
             connection.reader.push(ResponseReader::new(
-                0,
                 recv,
                 self.max_chunk_size,
                 last_recv,
@@ -1163,7 +1162,6 @@ async fn add_stream(connection: Arc<QuicConnection>) -> Result<u32, QuicClientEr
             .map_err(|_err| QuicClientError::StreamOpen)?;
         connection_lock.writer.push(Arc::new(Mutex::new(send)));
         connection_lock.reader.push(ResponseReader::new(
-            stream_index,
             recv,
             connection.max_chunk_size,
             last_recv.clone(),
