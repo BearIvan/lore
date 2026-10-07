@@ -11,9 +11,8 @@
 #     from a transport failure and so decide whether reconnecting can succeed.
 #
 # Both are used from production code, so dropping the `[patch.crates-io]` override in the
-# workspace root does not compile. The tree is otherwise the published crate unmodified,
-# and the source is also built under the workspace's `[build] rustflags`, which `-Wrust_2018_idioms`
-# makes stricter than upstream's own lints — the elided-lifetime annotations are there for that.
+# workspace root does not compile. The tree is otherwise the published crate, plus elided-lifetime
+# annotations.
 #
 # To move to a new upstream release: unpack that version's crates.io tarball over this directory,
 # re-apply each `LORE:` site, and confirm none was silently lost by grepping for `LORE:` and

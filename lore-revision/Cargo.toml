@@ -93,3 +93,6 @@ test-util = []
 [[test]]
 name = "compile_fail"
 required-features = ["compile_fail_tests"]
+
+[lints]
+workspace = true
