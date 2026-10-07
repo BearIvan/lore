@@ -24,25 +24,6 @@ use crate::types::*;
 /// https (see [`grpc_endpoint`]).
 pub const SCHEMES: [&str; 3] = ["ucs-auth", "https", "http"];
 
-/// Whether `auth_url` is a plain-http URL naming a loopback host. Does
-/// not accept username and password in URL, but just accepts plain
-/// localhost. This is to prevent bypassing through urls like
-/// `http://localhost:pass@evil.com`.
-fn is_loopback_http_url(auth_url: &str) -> bool {
-    let Ok(url) = url::Url::parse(auth_url) else {
-        return false;
-    };
-    if url.scheme() != "http" || !url.username().is_empty() || url.password().is_some() {
-        return false;
-    }
-    match url.host() {
-        Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
-        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
-        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
-        None => false,
-    }
-}
-
 /// Strips the custom scheme from an auth URL and returns a URL suitable for
 /// gRPC connection.
 ///
@@ -60,7 +41,11 @@ fn is_loopback_http_url(auth_url: &str) -> bool {
 pub fn grpc_endpoint(auth_url: &str) -> String {
     match auth_url.split_once("://") {
         Some(("https", _)) => auth_url.to_string(),
-        Some(("http", _)) if is_loopback_http_url(auth_url) => auth_url.to_string(),
+        Some(("http", _))
+            if url::Url::parse(auth_url).is_ok_and(|url| super::is_loopback_http_url(&url)) =>
+        {
+            auth_url.to_string()
+        }
         Some((_, rest)) => format!("https://{rest}"),
         None => format!("https://{auth_url}"),
     }
