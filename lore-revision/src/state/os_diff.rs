@@ -29,6 +29,7 @@ use crate::change;
 use crate::change::FileAction;
 use crate::change::NodeChange;
 use crate::change::NodeChangeState;
+use crate::errors::NodeNotFound;
 use crate::filter::FilterMode;
 use crate::filter::FilterStates;
 use crate::filter::WalkPath;
@@ -43,11 +44,10 @@ use crate::lore_drain_tasks;
 use crate::lore_trace;
 use crate::node::*;
 use crate::repository::BASE_SUFFIX;
-use crate::repository::DOT_LORE;
-use crate::repository::DOT_URC;
 use crate::repository::RepositoryContext;
 use crate::repository::TEMP_FILE_EXTENSION;
 use crate::repository::THEIRS_SUFFIX;
+use crate::repository::is_reserved_node_name;
 use crate::state::ChangeSender;
 use crate::state::diff::NodeMatch;
 use crate::state::diff::get_filtered_node_and_path;
@@ -68,6 +68,9 @@ async fn ensure_scan_dir_chain(
 ) -> Result<NodeID, StateError> {
     let mut current_node = ROOT_NODE;
     for segment in path.split('/').filter(|s| !s.is_empty()) {
+        if is_reserved_node_name(segment) {
+            return Err(NodeNotFound.into());
+        }
         let name_hash = crate::hash::hash_string(segment);
         if let Ok(child_id) = state
             .find_subnode(repository.clone(), current_node, name_hash)
@@ -1215,7 +1218,7 @@ async fn diff_filesystem_directory_walk(
         else {
             continue;
         };
-        if item.name == DOT_URC || item.name == DOT_LORE {
+        if is_reserved_node_name(item.name.as_str()) {
             continue;
         }
         if staging && staging_ignores_name(item.name.as_str()) {

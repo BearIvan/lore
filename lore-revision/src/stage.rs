@@ -55,12 +55,11 @@ use crate::node::ROOT_NODE;
 use crate::path::emit_path_ignore;
 use crate::progress::max_concurrent_stage_directory_tasks;
 use crate::repository::BASE_SUFFIX;
-use crate::repository::DOT_LORE;
-use crate::repository::DOT_URC;
 use crate::repository::RepositoryContext;
 use crate::repository::RepositoryWriteToken;
 use crate::repository::TEMP_FILE_EXTENSION;
 use crate::repository::THEIRS_SUFFIX;
+use crate::repository::is_reserved_node_name;
 use crate::revision::sync;
 use crate::revision::sync::SyncRealizeStats;
 use crate::state;
@@ -1803,7 +1802,13 @@ pub(crate) async fn stage_directory(
     // result depending on iteration order.
     let mut items: Vec<DirectoryEntry> = Vec::new();
     while let Some(item) = file_list.next().await {
-        items.push(item.forward_any::<StageError>("Unusable directory entry")?);
+        let item = item.forward_any::<StageError>("Unusable directory entry")?;
+        // The repository's own directory is not content, so it takes no part in the case
+        // resolution below, which moves what the losers of a collision hold on disk.
+        if is_reserved_node_name(&item.name) {
+            continue;
+        }
+        items.push(item);
     }
 
     resolve_case_variant_collisions(
@@ -2057,11 +2062,12 @@ pub(crate) async fn stage_directory(
             break;
         }
         let node_name = match state
-            .node_name_ref(repository.clone(), child)
+            .node_name_ref_or_skip(repository.clone(), child)
             .await
             .forward::<StageError>("Failed to resolve node name")
         {
-            Ok(node_name) => node_name,
+            Ok(Some(node_name)) => node_name,
+            Ok(None) => continue,
             Err(err) => {
                 failure = Some(err);
                 break;
@@ -2388,7 +2394,7 @@ pub(crate) async fn stage_node_from_metadata(
         });
     }
 
-    if name == DOT_URC || name == DOT_LORE {
+    if is_reserved_node_name(&name) {
         lore_trace!("Ignore dot directory {name}");
         return Ok(StagedChild::invalid());
     }

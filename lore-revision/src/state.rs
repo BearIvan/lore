@@ -89,6 +89,7 @@ use crate::node::*;
 use crate::repository::DOT_LORE;
 use crate::repository::RepositoryContext;
 use crate::repository::RepositoryWriteToken;
+use crate::repository::is_reserved_node_name;
 use crate::revision::RevisionMetadata;
 use crate::stage::stage_delete;
 use crate::store::KeyType;
@@ -3232,6 +3233,40 @@ impl State {
             .forward::<StateError>("Node name")
     }
 
+    /// [`Self::node_name_ref`], answering `None` for a node whose name the read path refuses,
+    /// logged as the node being skipped; see [`NodeBlock::node_name_ref_or_skip`].
+    ///
+    /// The returned `NodeNameLock` holds a read lock on the node's block for its lifetime.
+    /// Callers must drop it before calling `write()` on that block, or the write lock
+    /// acquisition will deadlock. Nothing is held when the answer is `None`.
+    pub async fn node_name_ref_or_skip(
+        &self,
+        repository: Arc<RepositoryContext>,
+        node: NodeID,
+    ) -> Result<Option<NodeNameLock>, StateError> {
+        let block = self
+            .block_with_nametable(repository, NodeBlock::index(node))
+            .await?;
+        block
+            .node_name_ref_or_skip(Node::index(node), node)
+            .forward::<StateError>("Node name")
+    }
+
+    /// [`Self::node_name_clone`], answering `None` for a node whose name the read path refuses,
+    /// logged as the node being skipped; see [`NodeBlock::node_name_ref_or_skip`].
+    ///
+    /// The name is copied out, so no lock on the block outlives the call.
+    pub async fn node_name_clone_or_skip(
+        &self,
+        repository: Arc<RepositoryContext>,
+        node: NodeID,
+    ) -> Result<Option<String>, StateError> {
+        Ok(self
+            .node_name_ref_or_skip(repository, node)
+            .await?
+            .map(|name| name.to_string()))
+    }
+
     pub async fn node_mark(
         &self,
         repository: Arc<RepositoryContext>,
@@ -3569,7 +3604,12 @@ impl State {
                     continue;
                 }
 
-                let name = self.node_name_clone(repository.clone(), child_id).await?;
+                let Some(name) = self
+                    .node_name_clone_or_skip(repository.clone(), child_id)
+                    .await?
+                else {
+                    continue;
+                };
                 let child_path = path.push_into_buf(&name).freeze();
 
                 // Don't carry forward dirty paths the view/ignore filter
@@ -3671,6 +3711,12 @@ impl State {
         Err(NodeNotFound.into())
     }
 
+    /// Resolves `path` below `root`, entering links on the way.
+    ///
+    /// A component naming the repository's own directory resolves to nothing: no node carries
+    /// that name, and a revision holding one anyway is not reached through it, whichever case
+    /// it is spelled in. Resolution is by name hash, which folds case, so this is the one check
+    /// on the path that a listing's skip of such a node does not already cover.
     pub async fn find_relative_node_link(
         &self,
         repository: Arc<RepositoryContext>,
@@ -3682,6 +3728,9 @@ impl State {
         let mut repository = repository;
         while !path.is_empty() {
             let current_name = path.pop_root();
+            if is_reserved_node_name(current_name) {
+                return Err(NodeNotFound.into());
+            }
             let name_hash = hash::hash_string(current_name);
 
             current_node = self
@@ -4790,7 +4839,9 @@ impl BlockCursor {
     }
 }
 
-/// Appends the name of `child_id` to `path`, reporting whether anything was added.
+/// Appends the name of `child_id` to `path`, reporting whether anything was added, or
+/// `None` for a node whose name the read path refuses, which appends nothing and is
+/// the caller's to pass over: a dirty flag can predate the rule that refuses the name.
 ///
 /// The name is a read lock on the block holding it, released as this returns and
 /// so before the caller descends. A walk that took a second shared lock on that
@@ -4804,11 +4855,13 @@ async fn push_dirty_child_name(
     repository: Arc<RepositoryContext>,
     path: &mut RelativePathBuf,
     child_id: NodeID,
-) -> Result<bool, StateError> {
-    let child_name = state.node_name_ref(repository, child_id).await?;
+) -> Result<Option<bool>, StateError> {
+    let Some(child_name) = state.node_name_ref_or_skip(repository, child_id).await? else {
+        return Ok(None);
+    };
     let named = !child_name.is_empty();
     path.push(child_name);
-    Ok(named)
+    Ok(Some(named))
 }
 
 /// One directory on the way down, and where the walk left off in its children.
@@ -4921,8 +4974,11 @@ async fn collect_dirty_paths_inner(
             continue;
         }
 
-        let appended =
-            push_dirty_child_name(&state, repository.clone(), parent_path, child_id).await?;
+        let Some(appended) =
+            push_dirty_child_name(&state, repository.clone(), parent_path, child_id).await?
+        else {
+            continue;
+        };
 
         // Don't carry forward dirty paths that the view/ignore filter
         // excludes — they cannot be re-applied against a checkout that
@@ -5108,9 +5164,12 @@ async fn gather_tree_paths_node(
     node.walk_step(node_id, expected_parent, cycle)?;
 
     let node_path = {
-        let node_name = block
-            .node_name_ref(node_index)
-            .forward::<StateError>("Node name")?;
+        let Some(node_name) = block
+            .node_name_ref_or_skip(node_index, node_id)
+            .forward::<StateError>("Node name")?
+        else {
+            return Ok(node.sibling());
+        };
         if parent_path.is_empty() {
             RelativePath::new_from_initial_path(&*node_name).unwrap_or_default()
         } else {
