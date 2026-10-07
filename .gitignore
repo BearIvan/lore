@@ -170,3 +170,5 @@ ctrf/
 
 # lychee link checker cache
 .lycheecache
+
+.crowd/
