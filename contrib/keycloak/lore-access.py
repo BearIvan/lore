@@ -4,10 +4,53 @@ import argparse,json,os,secrets,sys,requests
 BASE='https://10.8.0.1:8443'
 SECRET='/etc/lore-auth/management.json'
 CA='/etc/lore-auth/tls/ca.crt'
+def duration_seconds(value):
+ import re
+ match=re.fullmatch(r'([1-9][0-9]*)([smhdw])',value)
+ if not match: raise argparse.ArgumentTypeError('Use a positive duration such as 8h, 7d or 1w')
+ seconds=int(match[1])*{'s':1,'m':60,'h':3600,'d':86400,'w':604800}[match[2]]
+ if seconds>2147483647: raise argparse.ArgumentTypeError('Duration exceeds Keycloak integer limit')
+ return seconds
+
+def session_settings(duration):
+ """Keep idle lifetime equal to absolute lifetime, including closed clients."""
+ credentials=json.load(open('/etc/lore-auth/bootstrap.json'))
+ s=requests.Session(); s.verify=CA
+ r=s.post(BASE+'/realms/master/protocol/openid-connect/token',data={
+  'grant_type':'password','client_id':'admin-cli',
+  'username':credentials['admin_username'],'password':credentials['admin_password']},timeout=20)
+ if not r.ok: sys.exit('Realm administrator authentication failed; no changes made')
+ s.headers['Authorization']='Bearer '+r.json()['access_token']
+ url=BASE+'/admin/realms/lore'
+ def request(method,url,**kwargs):
+  response=s.request(method,url,timeout=20,**kwargs)
+  if not response.ok: sys.exit(f'Session settings: HTTP {response.status_code}')
+  return response.json() if response.content else None
+ keys=['ssoSessionIdleTimeout','ssoSessionMaxLifespan',
+       'ssoSessionIdleTimeoutRememberMe','ssoSessionMaxLifespanRememberMe',
+       'clientSessionIdleTimeout','clientSessionMaxLifespan']
+ if duration is not None:
+  clients=request('GET',url+'/clients?clientId=lore-cli')
+  if len(clients)!=1: sys.exit('Lore client not found; no changes made')
+  attrs=clients[0].get('attributes',{})
+  for key in ['client.session.idle.timeout','client.session.max.lifespan']:
+   override=int(attrs.get(key,'0') or '0')
+   if override>0 and override<duration:
+    sys.exit('Client override '+key+' is shorter than requested; remove it in Keycloak first. No changes made.')
+  request('PUT',url,json={key:duration for key in keys})
+ realm=request('GET',url)
+ values={key:realm.get(key,0) for key in keys}
+ values['accessTokenLifespan']=realm.get('accessTokenLifespan')
+ if duration is not None and any(values[key]!=duration for key in keys):
+  sys.exit('Session settings verification failed; inspect the realm settings')
+ print(json.dumps(values,indent=2))
+
 def main():
  if os.geteuid()!=0: sys.exit('Run via sudo/root on p4-vps')
  p=argparse.ArgumentParser(description=__doc__)
  sub=p.add_subparsers(dest='cmd',required=True)
+ q=sub.add_parser('session-settings',help='Show/set login lifetime independently of activity')
+ q.add_argument('--duration',type=duration_seconds,help='Absolute login lifetime, e.g. 8h, 7d, 1w')
  sub.add_parser('repositories')
  q=sub.add_parser('repository-register'); q.add_argument('name'); q.add_argument('repository_id')
  for name in ['user-create','user-disable','password-reset','grants']:
@@ -19,6 +62,8 @@ def main():
    level.add_argument('--admin',action='store_true',help='Compatibility alias for --access admin')
    level.add_argument('--access',choices=['read','write','admin'],default='write')
  a=p.parse_args()
+ if a.cmd=='session-settings':
+  session_settings(a.duration); return
  registry_path='/etc/lore-auth/repositories.json'
  registry=json.load(open(registry_path))
  if a.cmd=='repositories':
