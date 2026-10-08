@@ -48,6 +48,28 @@ pub async fn jwt_axum_verify_authorization(
                     .granted_access(Some(&token), repository)
                     .await
                 {
+                    let action = if matches!(
+                        *request.method(),
+                        axum::http::Method::GET | axum::http::Method::HEAD
+                    ) {
+                        "read"
+                    } else {
+                        "write"
+                    };
+                    let allowed = match &grants {
+                        Some(grants) => grants.permits(action),
+                        None => state
+                            .repository_authorizer
+                            .check_repository_access(Some(&token), repository, Some(action))
+                            .await
+                            .is_ok(),
+                    };
+                    if !allowed {
+                        return Response::builder()
+                            .status(StatusCode::FORBIDDEN)
+                            .body(Body::empty())
+                            .unwrap();
+                    }
                     Span::current().record(USER_ID, user_info.identity());
                     if let Some(grants) = grants {
                         request.extensions_mut().insert(PartitionGrants {

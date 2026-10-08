@@ -1010,7 +1010,10 @@ fn configure_lock_store_via_plugin(
 
         if mode == store_mode::LOCAL {
             info!("Creating local (in-memory) lock store");
-            let store = crate::lock::store::LocalLockStore::default();
+            let store = match &lock_settings.path {
+                Some(path) => crate::lock::store::LocalLockStore::persistent(path.clone())?,
+                None => crate::lock::store::LocalLockStore::default(),
+            };
             return Ok(Some(Arc::new(store)));
         }
 

@@ -37,6 +37,14 @@ use super::timeout_grpc;
 use crate::authnz::repository_authorizer::RepositoryAuthorizer;
 use crate::util::setup_execution;
 
+/// Shared by lock mutations and pushes on this server. Keeps a checkout from
+/// racing the push's lock check and branch-head update.
+#[derive(Clone)]
+pub struct LockEnforcement {
+    pub store: Option<Arc<dyn LockStore>>,
+    pub gate: Arc<tokio::sync::Mutex<()>>,
+}
+
 const STATUS_MAX_RESOURCE_LEN: usize = 100;
 
 #[derive(Clone)]
@@ -184,6 +192,11 @@ impl LoreLockService {
         &self,
         request: Request<LockRequest>,
     ) -> Result<Response<LockResponse>, Status> {
+        let enforcement = request.extensions().get::<LockEnforcement>().cloned();
+        let _gate = match &enforcement {
+            Some(enforcement) => Some(enforcement.gate.lock().await),
+            None => None,
+        };
         let repository = get_repository(request.metadata())?;
         let user_id = get_user_id(request.extensions());
         let correlation_id = extract_correlation_id(&request).unwrap_or_default();
@@ -298,6 +311,11 @@ impl LoreLockService {
         &self,
         request: Request<UnlockRequest>,
     ) -> Result<Response<UnlockResponse>, Status> {
+        let enforcement = request.extensions().get::<LockEnforcement>().cloned();
+        let _gate = match &enforcement {
+            Some(enforcement) => Some(enforcement.gate.lock().await),
+            None => None,
+        };
         let user_id = get_user_id(request.extensions());
         let correlation_id = extract_correlation_id(&request).unwrap_or_default();
         let repository = get_repository(request.metadata())?;
@@ -347,6 +365,11 @@ impl LoreLockService {
         &self,
         request: Request<AdminLockRequest>,
     ) -> Result<Response<AdminLockResponse>, Status> {
+        let enforcement = request.extensions().get::<LockEnforcement>().cloned();
+        let _gate = match &enforcement {
+            Some(enforcement) => Some(enforcement.gate.lock().await),
+            None => None,
+        };
         let correlation_id = extract_correlation_id(&request).unwrap_or_default();
         let repository = get_repository(request.metadata())?;
         let extensions = request.extensions().clone();

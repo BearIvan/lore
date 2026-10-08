@@ -630,3 +630,68 @@ mod behind_the_interceptor {
         );
     }
 }
+
+#[tokio::test]
+async fn read_only_tokens_cannot_mutate_either_grpc_api() {
+    use lore_server::auth::jwt::ResourcePermission;
+    use lore_server::authnz::resource_grants_authorizer::ResourceGrantsAuthorizer;
+    let authorizer = Arc::new(ResourceGrantsAuthorizer::new(
+        "resources".into(),
+        "resource_id".into(),
+        None,
+        "urc-{id}".into(),
+        "urc-*".into(),
+    ));
+    for namespace in ["urc.rpc.StorageService", "lore.storage.v1.StorageService"] {
+        for method in [
+            "Put",
+            "PutResolved",
+            "Copy",
+            "MutableStore",
+            "MutableCompareAndSwap",
+        ] {
+            let (mut service, inner) =
+                service_with(PartitionAccessLayer::new(authorizer.clone(), TEST_TIMEOUT));
+            let mut req = request(Some(repository()), true);
+            *req.uri_mut() = format!("/{namespace}/{method}").parse().unwrap();
+            req.extensions_mut()
+                .get_mut::<AuthorizationToken>()
+                .unwrap()
+                .resources = Some(vec![ResourcePermission {
+                resource_id: format!("urc-{}", repository()),
+                permission: vec!["read".into()],
+            }]);
+            let response = service.call(req).await.unwrap();
+            assert_eq!(
+                status_of(&response).code(),
+                Code::PermissionDenied,
+                "{namespace}/{method}"
+            );
+            assert_eq!(inner.calls(), 0);
+        }
+    }
+}
+
+#[test]
+fn mutation_rpc_permissions_cover_legacy_and_v1_names() {
+    use lore_server::grpc::tower::partition_access::rpc_action;
+    for method in [
+        "BranchPush",
+        "BranchCreate",
+        "BranchDelete",
+        "Lock",
+        "Unlock",
+        "Put",
+        "Copy",
+    ] {
+        assert_eq!(rpc_action(&format!("/any.Service/{method}")), "write");
+    }
+    for method in [
+        "MutableStore",
+        "MutableCompareAndSwap",
+        "AdminLock",
+        "BranchMetadataSet",
+    ] {
+        assert_eq!(rpc_action(&format!("/any.Service/{method}")), "admin");
+    }
+}

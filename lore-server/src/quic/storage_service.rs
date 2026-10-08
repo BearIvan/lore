@@ -298,6 +298,18 @@ pub enum ParsedStorageRequest {
     MutableCas(requests::MutableCas),
 }
 
+impl ParsedStorageRequest {
+    /// Storage writes also need write access when bypassing revision RPCs.
+    pub fn required_action(&self) -> &'static str {
+        match self {
+            Self::Put(_) | Self::PutResolved(_) | Self::Copy(_) => "write",
+            Self::MutableStoreOp(_) | Self::MutableCas(_) => "admin",
+            Self::Verify(verify) if verify.heal != 0 => "write",
+            _ => "read",
+        }
+    }
+}
+
 fn quic_error(message_error: &MessageHandleError) -> QuicServiceError {
     match message_error {
         MessageHandleError::AuthorizationFailure(_) | MessageHandleError::MissingToken => {
@@ -488,6 +500,41 @@ impl QuicService for StorageService {
         context: Arc<AttributeMap>,
         request: Self::ParsedRequestType,
     ) -> Result<Vec<Bytes>, Self::RequestHandlerError> {
+        if self.jwt_verifier.is_some() && !matches!(&request, ParsedStorageRequest::Connect(_)) {
+            let repository = *context
+                .get_or::<lore_revision::lore::RepositoryId, MessageHandleError>(
+                    MessageHandleError::NotConnected,
+                )?;
+            let action = request.required_action();
+            let allowed = if let Some(grants) =
+                context.get::<crate::authnz::repository_authorizer::PartitionGrants>()
+            {
+                grants.repository_id == repository && grants.grants.permits(action)
+            } else {
+                let raw = context.get::<crate::authnz::repository_authorizer::RawToken>();
+                let claims = context.get::<crate::auth::jwt::AuthorizationToken>();
+                match (raw, claims) {
+                    (Some(raw), Some(claims)) => self
+                        .repository_authorizer
+                        .check_repository_access(
+                            Some(&crate::authnz::repository_authorizer::VerifiedToken {
+                                raw: &raw.0,
+                                claims: &claims,
+                            }),
+                            repository,
+                            Some(action),
+                        )
+                        .await
+                        .is_ok(),
+                    _ => false,
+                }
+            };
+            if !allowed {
+                return Err(MessageHandleError::AuthorizationFailure(
+                    "Action not permitted".into(),
+                ));
+            }
+        }
         let lore_response = match request {
             ParsedStorageRequest::Connect(request) => {
                 request

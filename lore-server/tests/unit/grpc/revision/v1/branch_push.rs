@@ -116,11 +116,19 @@ fn make_service_account_request(
     revision: Hash,
 ) -> Request<BranchPushRequest> {
     let mut request = make_request(repository, branch, revision, false, false);
+    request.extensions_mut().insert(
+        lore_server::authnz::repository_authorizer::PartitionGrants {
+            repository_id: repository,
+            grants: lore_server::authnz::repository_authorizer::Grants::Actions(
+                ["push-protected".to_string()].into(),
+            ),
+        },
+    );
     request
         .extensions_mut()
         .insert(lore_server::auth::jwt::AuthorizationToken {
-            user_id: "service-bot".into(),
-            is_service_account: Some(true),
+            user_id: "publisher".into(),
+            is_service_account: Some(false),
             ..lore_server::auth::jwt::AuthorizationToken::default()
         });
     request
@@ -460,7 +468,7 @@ async fn unknown_branch_returns_not_found() {
 }
 
 #[tokio::test]
-async fn service_account_bypasses_protection() {
+async fn explicit_push_protected_grant_bypasses_protection() {
     let repository = random::<RepositoryId>();
     let (immutable_store, mutable_store, execution) =
         test_store_create().await.expect("Failed to create stores");
@@ -496,7 +504,7 @@ async fn service_account_bypasses_protection() {
             &instrument_provider,
         )
         .await
-        .expect("service account should bypass protection");
+        .expect("explicit grant should bypass protection");
         assert_eq!(
             response.into_inner().revision_signature,
             bytes::Bytes::from(revision)

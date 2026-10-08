@@ -109,6 +109,27 @@ pub struct PartitionAccessService<S> {
     authorization_timeout: Duration,
 }
 
+/// Permissions apply equally to legacy and v1 service paths.
+#[lore_macro::test_pub]
+pub(crate) fn rpc_action(path: &str) -> &'static str {
+    match path.rsplit('/').next().unwrap_or_default() {
+        "Put" | "PutResolved" | "Copy" | "BranchCreate" | "BranchDelete" | "BranchPush"
+        | "Lock" | "Unlock" | "Commit" | "Stage" | "Unstage" | "Push" | "Revert" | "Verify" => {
+            "write"
+        }
+        "RepositoryCreate"
+        | "RepositoryDelete"
+        | "RepositoryMetadataSet"
+        | "BranchMetadataSet"
+        | "AdminLock"
+        | "Obliterate"
+        | "MutableStore"
+        | "MutableCas"
+        | "MutableCompareAndSwap" => "admin",
+        _ => "read",
+    }
+}
+
 /// The authorization stage's verdict on one request.
 enum Access {
     /// Reachable; the enumerated grants when the authorizer had them.
@@ -159,12 +180,31 @@ where
             // besides a verdict. Only the extensions are borrowed into the
             // stage, not the request, so the future stays `Send` for any
             // body type.
+            let action = rpc_action(request.uri().path());
             let access = {
                 let extensions = request.extensions();
                 tokio::time::timeout(authorization_timeout, async move {
                     let token = get_verified_token(extensions);
                     match authorizer.granted_access(token.as_ref(), repository).await {
-                        Ok(grants) => Access::Granted(grants.filter(|_| token.is_some())),
+                        Ok(grants) => {
+                            let permitted = match &grants {
+                                Some(grants) => grants.permits(action),
+                                None if action == "read" => true,
+                                None => authorizer
+                                    .check_repository_access(
+                                        token.as_ref(),
+                                        repository,
+                                        Some(action),
+                                    )
+                                    .await
+                                    .is_ok(),
+                            };
+                            if permitted {
+                                Access::Granted(grants.filter(|_| token.is_some()))
+                            } else {
+                                Access::Denied
+                            }
+                        }
                         Err(_denied) => Access::Denied,
                     }
                 })

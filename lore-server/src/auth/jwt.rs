@@ -101,7 +101,12 @@ impl ResourceMatcher {
         resources
             .iter()
             .filter(|entry| entry.matches_resource(&resource_id, &self.resource_wildcard))
-            .any(|entry| entry.permission.iter().any(|granted| granted == action))
+            .any(|entry| {
+                crate::authnz::repository_authorizer::permission_allows(
+                    entry.permission.iter().map(String::as_str),
+                    action,
+                )
+            })
     }
 
     /// The actions granted on `repository`, merged across every matching

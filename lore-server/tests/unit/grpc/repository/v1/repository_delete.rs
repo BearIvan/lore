@@ -61,15 +61,30 @@ fn delete_request(id: RepositoryId, token: AuthorizationToken) -> Request<Reposi
     });
     request.extensions_mut().insert(token);
     request
+        .extensions_mut()
+        .insert(lore_server::authnz::repository_authorizer::RawToken(
+            "verified-test".into(),
+        ));
+    request.extensions_mut().insert(
+        lore_server::authnz::repository_authorizer::RequestAuthorizer(
+            Arc::new(
+                lore_server::authnz::resource_grants_authorizer::ResourceGrantsAuthorizer::new(
+                    "resources".into(),
+                    "resource_id".into(),
+                    None,
+                    "urc-{id}".into(),
+                    "urc-*".into(),
+                ),
+            ),
+            false,
+        ),
+    );
+    request
 }
 
-/// The creator check compares the recorded creator against the token's
-/// `identity_claim` value, so a deployment recording
-/// `preferred_username` lets the same user, presenting the same claim,
-/// delete — while the subject the provider minted alongside is not what
-/// is compared.
+/// Matching the creator, by subject or username, cannot replace the admin grant.
 #[tokio::test]
-async fn the_creator_check_compares_the_identity_claim() {
+async fn creator_identity_does_not_replace_the_required_admin_grant() {
     let (immutable_store, mutable_store, execution) =
         test_store_create().await.expect("Failed to create stores");
 
@@ -105,7 +120,7 @@ async fn the_creator_check_compares_the_identity_claim() {
             &TestInstrumentProvider,
         )
         .await
-        .expect("the identity claim matches the recorded creator");
+        .expect_err("a matching creator identity alone does not grant admin");
     }))
     .await;
 }

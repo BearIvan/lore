@@ -102,11 +102,11 @@ fn resource_id_format() {
 }
 
 #[tokio::test]
-async fn refresh_returns_not_supported() {
+async fn refresh_rejects_an_empty_credential_without_dialing() {
     let auth = UcsAuthentication;
     let result = auth
-        .refresh_authentication("ucs-auth://auth.example.com", "refresh-tok", "corr-1")
+        .refresh_authentication("ucs-auth://auth.example.com", "", "corr-1")
         .await;
     assert!(result.is_err());
-    assert!(result.unwrap_err().is_not_supported());
+    assert!(result.unwrap_err().is_not_authenticated());
 }

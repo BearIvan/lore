@@ -94,7 +94,15 @@ type GrpcRouter = tonic::transport::server::Router<
                             >,
                             CorrelationIdLayer,
                         >,
-                        Stack<CoreHopLayer, tower::layer::util::Identity>,
+                        Stack<
+                            axum::Extension<
+                                crate::authnz::repository_authorizer::RequestAuthorizer,
+                            >,
+                            Stack<
+                                axum::Extension<crate::grpc::lock_service::LockEnforcement>,
+                                Stack<CoreHopLayer, tower::layer::util::Identity>,
+                            >,
+                        >,
                     >,
                 >,
             >,
@@ -159,6 +167,9 @@ impl GrpcServiceSettings for GenericServiceSettings {
 /// misspelled block or key leaves the service registered.
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct GrpcPublicServicesSettings {
+    /// Use local admin grants for create/delete instead of a legacy ReBAC API.
+    #[serde(default)]
+    pub local_repository_administration: bool,
     #[serde(default)]
     pub admin_service: GenericServiceSettings,
     #[serde(default)]
@@ -690,6 +701,18 @@ impl GrpcServerBuilder<MaybeJwtVerifier> {
             // Outermost, so everything inward runs on core: this stack is served
             // from net.
             .layer(CoreHopLayer)
+            .layer(axum::Extension(
+                crate::grpc::lock_service::LockEnforcement {
+                    store: self.0.lock_store.clone(),
+                    gate: Arc::new(tokio::sync::Mutex::new(())),
+                },
+            ))
+            .layer(axum::Extension(
+                crate::authnz::repository_authorizer::RequestAuthorizer(
+                    repository_authorizer.clone(),
+                    services.local_repository_administration,
+                ),
+            ))
             .layer(
                 CorrelationIdLayerBuilder::new()
                     .with_grpc_tracer(trace_layer_config)

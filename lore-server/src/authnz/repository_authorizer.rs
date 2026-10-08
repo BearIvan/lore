@@ -62,12 +62,36 @@ impl VerifiedTokenOwned {
     }
 }
 
+/// Authorizer for RPCs whose partition is in the decoded body.
+#[derive(Clone)]
+pub struct RequestAuthorizer(pub Arc<dyn RepositoryAuthorizer>, pub bool);
+
+pub async fn authorize_body(
+    extensions: &tonic::Extensions,
+    repository: RepositoryId,
+    action: &str,
+) -> Result<(), Status> {
+    let Some(token) = crate::grpc::get_verified_token(extensions) else {
+        if extensions.get::<AuthorizationToken>().is_some() {
+            return Err(Status::permission_denied("Incomplete verified token"));
+        }
+        return Ok(()); // JWT interceptor only omits tokens on a no-auth server.
+    };
+    let authorizer = extensions
+        .get::<RequestAuthorizer>()
+        .ok_or_else(|| Status::permission_denied("Missing request authorizer"))?;
+    authorizer
+        .0
+        .check_repository_access(Some(&token), repository, Some(action))
+        .await
+}
+
 /// A caller's enumerated access to one partition.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Grants {
     /// The partition is not reachable: every action denied.
     Denied,
-    /// Reachable, permitted exactly these actions.
+    /// Reachable, with these permission values and their basic-role implications.
     Actions(HashSet<String>),
     /// Reachable, permitted every action.
     All,
@@ -82,9 +106,22 @@ impl Grants {
         match self {
             Grants::Denied => false,
             Grants::All => true,
-            Grants::Actions(actions) => actions.contains(action),
+            Grants::Actions(actions) => {
+                permission_allows(actions.iter().map(String::as_str), action)
+            }
         }
     }
+}
+
+/// Basic repository roles. Reachability retains legacy read access; writes
+/// require an explicit write, admin or owner grant. Other actions stay explicit.
+pub fn permission_allows<'a>(permissions: impl Iterator<Item = &'a str>, action: &str) -> bool {
+    if action == "read" {
+        return true;
+    }
+    permissions.into_iter().any(|granted| {
+        granted == action || (action == "write" && matches!(granted, "admin" | "owner"))
+    })
 }
 
 /// The partition-access layer's enumerated answer for the partition the
@@ -380,7 +417,9 @@ fn evaluate_check_user_permission(
         .iter()
         .filter(|entry| entry.resource_id == resource_id)
         .any(|entry| {
-            action.is_none_or(|action| entry.permission.iter().any(|granted| granted == action))
+            action.is_none_or(|action| {
+                permission_allows(entry.permission.iter().map(String::as_str), action)
+            })
         });
     if permitted {
         Ok(())

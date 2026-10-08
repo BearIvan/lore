@@ -49,7 +49,6 @@ use crate::cache::revision::store_history_step;
 use crate::grpc::FilterSlowDownExt;
 use crate::grpc::ServerResultExt;
 use crate::grpc::extract_correlation_id;
-use crate::grpc::get_authorization;
 use crate::grpc::get_repository;
 use crate::grpc::get_user_id;
 use crate::grpc::get_write_token;
@@ -90,20 +89,40 @@ pub async fn handler(
     acceleration: crate::grpc::server::RevisionListAcceleration,
     instrument_provider: &impl InstrumentProvider,
 ) -> Result<Response<BranchPushResponse>, Status> {
-    let user_info = get_authorization(request.extensions());
+    let enforcement = request
+        .extensions()
+        .get::<crate::grpc::lock_service::LockEnforcement>()
+        .cloned();
+    let _gate = match &enforcement {
+        Some(enforcement) => Some(enforcement.gate.clone().lock_owned().await),
+        None => None,
+    };
     let user_id = get_user_id(request.extensions());
     let correlation_id = extract_correlation_id(&request).unwrap_or_default();
     let repository = get_repository(request.metadata())?;
 
-    // TODO(mjansson): Once we have authz permission model with read/write/admin
-    // this should be upgraded to check for the correct permission rather than
-    // hardwired to service accounts. For now used to protect while allowing mirroring
-    let mut bypass_protection = false;
-    if let Ok(user_info) = user_info
-        && user_info.is_service_account.unwrap_or_default()
+    let bypass_protection = if let Some(authorizer) =
+        request
+            .extensions()
+            .get::<crate::authnz::repository_authorizer::RequestAuthorizer>()
     {
-        bypass_protection = true;
-    }
+        authorizer
+            .0
+            .permits(request.extensions(), repository, "admin")
+            .await
+            || authorizer
+                .0
+                .permits(request.extensions(), repository, "push-protected")
+                .await
+    } else {
+        request
+            .extensions()
+            .get::<crate::authnz::repository_authorizer::PartitionGrants>()
+            .is_some_and(|grants| {
+                grants.repository_id == repository
+                    && (grants.grants.permits("admin") || grants.grants.permits("push-protected"))
+            })
+    };
 
     let client_ip: Option<String> = extract_client_ip(&request).map(|ip_addr| ip_addr.to_string());
     let req = request.into_inner();
@@ -150,6 +169,17 @@ pub async fn handler(
             hook_dispatcher
                 .dispatch_pre(HookPoint::BranchPush, &hook_ctx)
                 .map_err(hook_error_to_status)?;
+
+            if let Some(enforcement) = &enforcement {
+                crate::grpc::handlers::branch_push::check_push_locks(
+                    enforcement,
+                    repository.clone(),
+                    branch,
+                    revision,
+                    &user_id,
+                )
+                .await?;
+            }
 
             let PushResult {
                 success,
@@ -275,6 +305,79 @@ pub(crate) async fn dispatch_response_message(
     hook_dispatcher
         .dispatch_response(HookPoint::BranchPush, &response_ctx)
         .message
+}
+
+/// Reject changes to another user's locked paths, including deletion and moves.
+/// Called with the shared lock gate held through the branch-head update.
+pub async fn check_push_locks(
+    enforcement: &crate::grpc::lock_service::LockEnforcement,
+    repository: Arc<RepositoryContext>,
+    branch: BranchId,
+    revision: Hash,
+    user_id: &str,
+) -> Result<(), Status> {
+    let Some(store) = &enforcement.store else {
+        return Ok(());
+    };
+    let locks = store
+        .query_locks(lore_revision::lock::LockQuery::RepositoryBranch(
+            repository.id,
+            branch,
+        ))
+        .await
+        .map_err(|err| Status::internal(format!("Cannot validate locks: {err}")))?;
+    let foreign: Vec<_> = locks
+        .into_iter()
+        .filter(|lock| lock.owner != user_id)
+        .collect();
+    if foreign.is_empty() {
+        return Ok(());
+    }
+    let head = load_latest(repository.clone(), branch)
+        .await
+        .map_err(|err| Status::internal(format!("Cannot load branch head: {err}")))?;
+    if head == revision {
+        return Ok(());
+    }
+    let from = State::deserialize(repository.clone(), head)
+        .await
+        .map_err(|err| Status::internal(format!("Cannot load branch state: {err}")))?;
+    let to = State::deserialize(repository.clone(), revision)
+        .await
+        .map_err(|err| Status::internal(format!("Cannot load pushed state: {err}")))?;
+    let changes = state::diff_collect(
+        repository.clone(),
+        from,
+        repository,
+        to,
+        None,
+        lore_revision::filter::FilterMode::Full,
+    )
+    .await
+    .map_err(|err| Status::internal(format!("Cannot validate changed paths: {err}")))?;
+    for lock in foreign {
+        let locked = lock.resource.description;
+        if changes.iter().any(|change| {
+            let path = change.path().as_str();
+            path == locked
+                || change
+                    .move_source()
+                    .is_some_and(|source| source.as_str() == locked)
+                || (matches!(
+                    change.action,
+                    lore_revision::change::FileAction::Delete
+                        | lore_revision::change::FileAction::Move
+                ) && (!path.is_empty() && locked.starts_with(&format!("{path}/"))
+                    || change.move_source().is_some_and(|source| {
+                        locked.starts_with(&format!("{}/", source.as_str()))
+                    })))
+        }) {
+            return Err(Status::permission_denied(format!(
+                "File is locked by another user: {locked}"
+            )));
+        }
+    }
+    Ok(())
 }
 
 pub struct PushResult {

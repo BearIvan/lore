@@ -59,7 +59,7 @@ message GetAuthSessionRequest {
 
 message GetAuthSessionResponse { optional UserToken user_token = 1; }
 
-message RefreshAuthSessionRequest {}
+message RefreshAuthSessionRequest { string refresh_token = 1; }
 
 message RefreshAuthSessionResponse { optional UserToken user_token = 1; }
 
@@ -95,6 +95,7 @@ message UserToken {
   int64 expires_at = 2; // Epoch
   string user_id = 3;   // URC user ID
   string user_name = 4; // Display name
+  optional string refresh_token = 5; // Refresh credential, only returned by login/refresh
 }
 
 message ResourcePermission {

@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Epic Games, Inc.
 // SPDX-License-Identifier: MIT
 use async_trait::async_trait;
-use lore_base::error::NotSupported;
 use lore_base::types::RepositoryId;
 use lore_proto::auth::ExchangeExternalTokenForUserTokenRequest;
 use lore_proto::auth::ExchangeUserTokenForMultiresourceTokenRequest;
 use lore_proto::auth::GetAuthSessionRequest;
 use lore_proto::auth::GetUserIdRequest;
 use lore_proto::auth::GetUserInfoRequest;
+use lore_proto::auth::RefreshAuthSessionRequest;
 use lore_proto::auth::StartAuthSessionRequest;
 use lore_proto::auth::urc_auth_api_client::UrcAuthApiClient;
 
@@ -155,7 +155,7 @@ impl Authentication for UcsAuthentication {
                 expires_ms: token.expires_at.max(0) as u64,
                 // Populated by orchestration layer via JWT decode, not the proto response
                 acceptable_root_domains: Vec::new(),
-                refresh_token: None,
+                refresh_token: token.refresh_token,
             })),
             None => Ok(None),
         }
@@ -197,13 +197,31 @@ impl Authentication for UcsAuthentication {
 
     async fn refresh_authentication(
         &self,
-        _auth_url: &str,
-        _refresh_token: &str,
+        auth_url: &str,
+        refresh_token: &str,
         _correlation_id: &str,
     ) -> Result<AuthenticationToken, ProtocolError> {
-        Err(ProtocolError::from(NotSupported {
-            operation: "refresh_authentication".to_string(),
-        }))
+        if refresh_token.is_empty() {
+            return Err(ProtocolError::from(lore_base::error::NotAuthenticated));
+        }
+        let mut client = connect_client(auth_url).await?;
+        let token = client
+            .refresh_auth_session(RefreshAuthSessionRequest {
+                refresh_token: refresh_token.to_string(),
+            })
+            .await
+            .map_err(ProtocolError::from)?
+            .into_inner()
+            .user_token
+            .ok_or_else(|| ProtocolError::from(lore_base::error::NotAuthenticated))?;
+        Ok(AuthenticationToken {
+            token: token.user_token,
+            user_id: token.user_id,
+            user_name: token.user_name,
+            expires_ms: token.expires_at.max(0) as u64,
+            acceptable_root_domains: Vec::new(),
+            refresh_token: token.refresh_token,
+        })
     }
 
     async fn exchange_for_repository(

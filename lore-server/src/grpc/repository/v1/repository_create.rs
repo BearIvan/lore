@@ -63,6 +63,21 @@ pub async fn handler(
     hook_dispatcher: &HookDispatcher,
     instrument_provider: &impl InstrumentProvider,
 ) -> Result<Response<RepositoryCreateResponse>, Status> {
+    crate::authnz::repository_authorizer::authorize_body(
+        request.extensions(),
+        lore_base::types::Context::from(request.get_ref().id.clone()).into(),
+        "admin",
+    )
+    .await?;
+    let auth_url = if request
+        .extensions()
+        .get::<crate::authnz::repository_authorizer::RequestAuthorizer>()
+        .is_some_and(|authorizer| authorizer.1)
+    {
+        None
+    } else {
+        auth_url
+    };
     let user_id = get_user_id(request.extensions());
     let correlation_id = extract_correlation_id(&request).unwrap_or_default();
     let authorization = extract_authorization_header(&request);

@@ -806,6 +806,8 @@ pub enum ReplicationMode {
 #[derive(Clone, Debug, Default, Deserialize)]
 //#[serde(deny_unknown_fields)]
 pub struct LockStoreSettings {
+    /// Optional local lock snapshot. Set this to retain checkouts across restarts.
+    pub path: Option<std::path::PathBuf>,
     /// The lock store plugin mode (e.g., "dynamodb", "local")
     #[allow(dead_code)]
     pub mode: String,

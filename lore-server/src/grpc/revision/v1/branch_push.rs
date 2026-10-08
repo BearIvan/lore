@@ -28,7 +28,6 @@ use tracing::span;
 use crate::grpc::FilterSlowDownExt;
 use crate::grpc::ServerResultExt;
 use crate::grpc::extract_correlation_id;
-use crate::grpc::get_authorization;
 use crate::grpc::get_repository;
 use crate::grpc::get_user_id;
 use crate::grpc::handlers::branch_push::PushResult;
@@ -69,18 +68,40 @@ pub async fn handler(
     acceleration: crate::grpc::server::RevisionListAcceleration,
     instrument_provider: &impl InstrumentProvider,
 ) -> Result<Response<BranchPushResponse>, Status> {
-    let user_info = get_authorization(request.extensions());
+    let enforcement = request
+        .extensions()
+        .get::<crate::grpc::lock_service::LockEnforcement>()
+        .cloned();
+    let _gate = match &enforcement {
+        Some(enforcement) => Some(enforcement.gate.clone().lock_owned().await),
+        None => None,
+    };
     let user_id = get_user_id(request.extensions());
     let correlation_id = extract_correlation_id(&request).unwrap_or_default();
     let repository_id = get_repository(request.metadata())?;
 
-    // Service accounts bypass branch-protection (mirroring path).
-    let mut bypass_protection = false;
-    if let Ok(user_info) = user_info
-        && user_info.is_service_account.unwrap_or_default()
+    let bypass_protection = if let Some(authorizer) =
+        request
+            .extensions()
+            .get::<crate::authnz::repository_authorizer::RequestAuthorizer>()
     {
-        bypass_protection = true;
-    }
+        authorizer
+            .0
+            .permits(request.extensions(), repository_id, "admin")
+            .await
+            || authorizer
+                .0
+                .permits(request.extensions(), repository_id, "push-protected")
+                .await
+    } else {
+        request
+            .extensions()
+            .get::<crate::authnz::repository_authorizer::PartitionGrants>()
+            .is_some_and(|grants| {
+                grants.repository_id == repository_id
+                    && (grants.grants.permits("admin") || grants.grants.permits("push-protected"))
+            })
+    };
 
     let client_ip: Option<String> = extract_client_ip(&request).map(|ip| ip.to_string());
     let req = request.into_inner();
@@ -134,6 +155,17 @@ pub async fn handler(
                 .map_err(hook_error_to_status)?;
 
             ensure_branch_pushable(repository.clone(), branch_id).await?;
+
+            if let Some(enforcement) = &enforcement {
+                crate::grpc::handlers::branch_push::check_push_locks(
+                    enforcement,
+                    repository.clone(),
+                    branch_id,
+                    revision,
+                    &user_id,
+                )
+                .await?;
+            }
 
             let PushResult {
                 success,

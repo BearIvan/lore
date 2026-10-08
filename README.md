@@ -29,6 +29,11 @@
 
 </div>
 
+This BearIvan fork adds repository read/write/admin permissions, server-enforced
+foreign-file locks with persistent local snapshots, automatic Keycloak session
+refresh, and an Unreal Engine source-control plugin. See the
+[team access and Unreal locking guide](docs/how-to/team-access.md).
+
 <details>
   <summary>Table of contents</summary>
 

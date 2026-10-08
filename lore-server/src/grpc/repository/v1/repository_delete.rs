@@ -46,19 +46,28 @@ pub async fn handler(
     instrument_provider: &impl InstrumentProvider,
 ) -> Result<Response<RepositoryDeleteResponse>, Status> {
     let user_info = get_authorization(request.extensions());
+    crate::authnz::repository_authorizer::authorize_body(
+        request.extensions(),
+        lore_base::types::Context::from(request.get_ref().id.clone()).into(),
+        "admin",
+    )
+    .await?;
+    let auth_url = if request
+        .extensions()
+        .get::<crate::authnz::repository_authorizer::RequestAuthorizer>()
+        .is_some_and(|authorizer| authorizer.1)
+    {
+        None
+    } else {
+        auth_url
+    };
     let user_id = get_user_id(request.extensions());
     let correlation_id = extract_correlation_id(&request).unwrap_or_default();
     let authorization = extract_authorization_header(&request);
     let req = request.into_inner();
 
-    // TODO(mjansson): Once the authz model has read/write/admin, replace
-    // the service-account bypass with a proper permission check.
-    let mut bypass_protection = false;
-    if let Ok(user_info) = user_info
-        && user_info.is_service_account.unwrap_or_default()
-    {
-        bypass_protection = true;
-    }
+    // Body authorization above has already required admin for authenticated callers.
+    let bypass_protection = user_info.is_ok();
 
     let id: RepositoryId = Context::from(req.id).into();
     let execution = setup_execution(module_path!(), correlation_id, user_id);

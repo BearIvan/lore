@@ -266,21 +266,36 @@ impl QuicService for StorageServiceV4 {
                     .get(session_id)
                     .ok_or(MessageHandleError::NotConnected)?;
 
+                let parsed = parse_message_for_opcode_v4(opcode, payload)
+                    .map_err(|err| MessageHandleError::AuthorizationFailure(err.to_string()))?;
                 let repository = session.repository;
                 let correlation_id = session.correlation_id.clone();
                 let user_id = session.user_id.clone();
                 let token = session.token.clone();
+                let grants = session.grants.clone();
                 let authorized_sources = session.authorized_sources.clone();
                 drop(session);
+                if self.jwt_verifier.is_some() {
+                    let action = parsed.required_action();
+                    let allowed = match grants {
+                        Some(grants) => grants.permits(action),
+                        None => self
+                            .repository_authorizer
+                            .check_repository_access(
+                                token.as_deref().map(VerifiedTokenOwned::as_token).as_ref(),
+                                repository,
+                                Some(action),
+                            )
+                            .await
+                            .is_ok(),
+                    };
+                    if !allowed {
+                        return Err(MessageHandleError::AuthorizationFailure(
+                            "Action not permitted".into(),
+                        ));
+                    }
+                }
 
-                // Parse the storage command payload using v4-aware parsers — Copy carries an
-                // extra `target_context` field on the wire that the legacy parser cannot decode.
-                let parsed = parse_message_for_opcode_v4(opcode, payload).map_err(|err| {
-                    tracing::warn!("Failed to parse v4 storage command: {err}");
-                    MessageHandleError::InternalError
-                })?;
-
-                // Dispatch to standalone handler functions with explicit session context
                 let response = match parsed {
                     crate::quic::storage_service::ParsedStorageRequest::Get(get) => {
                         handle_get(

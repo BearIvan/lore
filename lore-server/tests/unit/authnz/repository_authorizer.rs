@@ -458,7 +458,8 @@ mod grants {
         // permission list, or Tier 1 without a permission claim.
         let none = Grants::Actions(HashSet::new());
         assert!(none.reachable());
-        assert!(!none.permits("read"));
+        assert!(none.permits("read"));
+        assert!(!none.permits("write"));
     }
 
     /// The response-derived grants merge every entry naming the
@@ -657,4 +658,22 @@ fn selection_display_names_the_implementation() {
         AuthorizerSelection::ResourceGrants.to_string(),
         "ResourceGrantsAuthorizer"
     );
+}
+
+#[test]
+fn basic_roles_do_not_promote_readers_or_writers() {
+    let grants =
+        |roles: &[&str]| Grants::Actions(roles.iter().map(|role| role.to_string()).collect());
+    for roles in [vec![], vec!["read"]] {
+        let reader = grants(&roles);
+        assert!(reader.permits("read"));
+        assert!(!reader.permits("write"));
+        assert!(!reader.permits("admin"));
+    }
+    let writer = grants(&["read", "write"]);
+    assert!(writer.permits("read") && writer.permits("write"));
+    assert!(!writer.permits("admin") && !writer.permits("owner"));
+    let admin = grants(&["admin"]);
+    assert!(admin.permits("read") && admin.permits("write") && admin.permits("admin"));
+    assert!(!Grants::Denied.permits("read"));
 }

@@ -72,7 +72,7 @@ pub async fn handler(
                 .check_repository_access(
                     get_verified_token(&extensions).as_ref(),
                     repository_id.into(),
-                    None,
+                    Some("admin"),
                 )
                 .await
                 .map_err(|_err| no_repository_access_status())?;

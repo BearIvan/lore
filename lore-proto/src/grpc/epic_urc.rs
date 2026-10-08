@@ -43,8 +43,11 @@ pub struct GetAuthSessionResponse {
     #[prost(message, optional, tag = "1")]
     pub user_token: ::core::option::Option<UserToken>,
 }
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct RefreshAuthSessionRequest {}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RefreshAuthSessionRequest {
+    #[prost(string, tag = "1")]
+    pub refresh_token: ::prost::alloc::string::String,
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RefreshAuthSessionResponse {
     #[prost(message, optional, tag = "1")]
@@ -116,6 +119,9 @@ pub struct UserToken {
     /// Display name
     #[prost(string, tag = "4")]
     pub user_name: ::prost::alloc::string::String,
+    /// Refresh credential, only returned by login/refresh
+    #[prost(string, optional, tag = "5")]
+    pub refresh_token: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ResourcePermission {

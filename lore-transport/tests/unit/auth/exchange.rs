@@ -4,6 +4,31 @@ use lore_base::types::RepositoryId;
 use lore_transport::auth::authentication;
 use lore_transport::auth::exchange::*;
 
+#[tokio::test]
+async fn explicit_credentials_are_never_replaced_by_a_cached_refresh_session() {
+    let token = fresh_authentication_token(
+        "unregistered://refresh-isolation.invalid",
+        "caller",
+        "refresh-isolation.invalid",
+        "supplied-identity",
+        "",
+    )
+    .await
+    .unwrap();
+    assert_eq!(token, "supplied-identity");
+    // An access token authorizes on its own; it must not be exchanged as an identity.
+    let error = fresh_authentication_token(
+        "unregistered://refresh-isolation.invalid",
+        "caller",
+        "refresh-isolation.invalid",
+        "",
+        "supplied-access",
+    )
+    .await
+    .unwrap_err();
+    assert!(error.is_not_authenticated());
+}
+
 /// A supplied access token is the authorization token, so the exchange is
 /// skipped entirely -- including the checks that would otherwise reject a
 /// call with no auth URL and no identity.

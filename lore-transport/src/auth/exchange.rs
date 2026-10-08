@@ -76,6 +76,90 @@ pub fn is_expired(expires: u64) -> bool {
     current_time >= expires
 }
 
+/// Load a caller-selected credential, refreshing only credentials from the
+/// secure store. Supplied tokens remain exactly the caller's instruction.
+pub async fn fresh_authentication_token(
+    auth_url: &str,
+    identity: &str,
+    recipient_domain: &str,
+    identity_token: &str,
+    access_token: &str,
+) -> Result<String, ExchangeError> {
+    let load = || {
+        token_store::load_user_token(
+            auth_url,
+            identity,
+            tokens_only_for_recipient_domain(recipient_domain.to_string()),
+            identity_token,
+            access_token,
+        )
+    };
+    let token = load().await.map_err(authentication_store_error)?;
+    if !identity_token.is_empty() || !access_token.is_empty() {
+        return Ok(token);
+    }
+    let info = lore_credential::user_info_from_token(token.clone())
+        .ok_or_else(|| ExchangeError::from(NotAuthenticated))?;
+    if !is_expired(info.expires) {
+        return Ok(token);
+    }
+    // Re-check after serialization, so concurrent operations within the client
+    // reuse the credential already refreshed by the first operation.
+    static REFRESH: Mutex<()> = Mutex::const_new(());
+    let _refresh = REFRESH.lock().await;
+    let token = load().await.map_err(authentication_store_error)?;
+    let previous = insecure_decode_token(&token).internal("decoding stored authentication")?;
+    if let Some(info) = lore_credential::user_info_from_token(token.clone())
+        && !is_expired(info.expires)
+    {
+        return Ok(token);
+    }
+    let refresh = token_store::load_refresh_token(auth_url, identity)
+        .await
+        .map_err(authentication_store_error)?;
+    let backend =
+        authentication::find(auth_url).forward::<ExchangeError>("finding refresh backend")?;
+    let renewed = backend
+        .refresh_authentication(auth_url, &refresh, "")
+        .await
+        .forward::<ExchangeError>("refreshing authentication session")?;
+    let decoded =
+        insecure_decode_token(&renewed.token).internal("decoding refreshed authentication")?;
+    let info = lore_credential::user_info_from_token(renewed.token.clone())
+        .ok_or_else(|| ExchangeError::from(NotAuthenticated))?;
+    if renewed.user_id != identity
+        || decoded.claims.user_id != previous.claims.user_id
+        || decoded.claims.issuer != previous.claims.issuer
+        || is_expired(info.expires)
+    {
+        return Err(NotAuthenticated.into());
+    }
+    verify_jwt_usage_for_remote(&decoded.claims, recipient_domain)
+        .forward::<ExchangeError>("verifying refreshed token recipient")?;
+    token_store::store_user_token(
+        auth_url,
+        identity,
+        &renewed.token,
+        decoded.claims.acceptable_root_domains(),
+    )
+    .await
+    .map_err(authentication_store_error)?;
+    if let Some(refresh) = renewed.refresh_token {
+        token_store::store_refresh_token(auth_url, identity, &refresh)
+            .await
+            .map_err(authentication_store_error)?;
+    }
+    Ok(renewed.token)
+}
+
+fn authentication_store_error(error: token_store::TokenStoreError) -> ExchangeError {
+    if error.is_token_not_found() {
+        NotAuthenticated.into()
+    } else {
+        ExchangeError::internal_with_context(error, "accessing the authentication store")
+    }
+}
+
 /// Exchanges an authentication token for a repository-scoped authorization
 /// token via the registered `Authentication` implementation.
 ///
@@ -179,18 +263,14 @@ pub async fn exchange(
 
     // Load authn token for the auth service domain
     lore_trace!("Authorizing using authn identity: {identity}");
-    let Some(auth_service_only_token) = lore_credential::user_info(
+    let auth_service_only_token = fresh_authentication_token(
         auth_url.as_str(),
         identity,
-        tokens_only_for_recipient_domain(auth_domain),
+        &auth_domain,
         identity_token,
         access_token,
     )
-    .await
-    else {
-        lore_debug!("Not authenticated, unable to perform authz exchange");
-        return Err(NotAuthenticated.into());
-    };
+    .await?;
     lore_trace!("Authorizing using endpoint: {auth_url}");
 
     let time_start = Instant::now();
@@ -206,7 +286,7 @@ pub async fn exchange(
     let authz = auth_impl
         .exchange_for_repository(
             &auth_url,
-            &auth_service_only_token.token,
+            &auth_service_only_token,
             repository,
             &correlation_id,
         )
@@ -355,18 +435,14 @@ pub async fn exchange_custom_resource(
     }
 
     lore_trace!("Authorizing using authn identity: {identity}");
-    let Some(auth_service_only_token) = lore_credential::user_info(
+    let auth_service_only_token = fresh_authentication_token(
         auth_url.as_str(),
         identity,
-        tokens_only_for_recipient_domain(auth_domain),
+        &auth_domain,
         identity_token,
         access_token,
     )
-    .await
-    else {
-        lore_debug!("Not authenticated, unable to perform authz exchange");
-        return Err(NotAuthenticated.into());
-    };
+    .await?;
     lore_trace!("Authorizing using endpoint: {auth_url}");
 
     let time_start = Instant::now();
@@ -381,7 +457,7 @@ pub async fn exchange_custom_resource(
     let authz = auth_impl
         .exchange_for_custom_resource(
             &auth_url,
-            &auth_service_only_token.token,
+            &auth_service_only_token,
             resource_id,
             &correlation_id,
         )
@@ -503,10 +579,10 @@ async fn auth_exchange_for_identity(
     identity_token: &str,
     access_token: &str,
 ) -> (String, String, String) {
-    let authentication_token = token_store::load_user_token(
+    let authentication_token = fresh_authentication_token(
         auth_url,
         identity,
-        tokens_only_for_recipient_domain(remote_domain.to_string()),
+        remote_domain,
         identity_token,
         access_token,
     )
@@ -664,10 +740,10 @@ async fn auth_exchange_custom_resource_for_identity(
     identity_token: &str,
     access_token: &str,
 ) -> (String, String, String) {
-    let authentication_token = token_store::load_user_token(
+    let authentication_token = fresh_authentication_token(
         auth_url,
         identity,
-        tokens_only_for_recipient_domain(remote_domain.to_string()),
+        remote_domain,
         identity_token,
         access_token,
     )
