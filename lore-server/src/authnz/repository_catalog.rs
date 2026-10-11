@@ -123,21 +123,29 @@ impl BaselineRepositoryCatalog {
     }
 
     async fn list_held(&self) -> Result<Vec<RepositoryId>, Status> {
-        let repository = Arc::new(RepositoryContext::new_server_context(
-            self.immutable_store.clone(),
-            self.mutable_store.clone(),
-            Context::default().into(),
-        ));
-        let mut stream = repository::list_local(repository)
-            .await
-            .filter_slow_down()?
-            .warn_map_err(|err| Status::internal(format!("Failed to list repositories: {err}")))?;
-        let mut held = Vec::new();
-        while let Some(id) = stream.next().await {
-            held.push(id.into());
-        }
-        Ok(held)
+        list_held(self.immutable_store.clone(), self.mutable_store.clone()).await
     }
+}
+
+/// Every partition the server holds, enumerated from the mutable store.
+async fn list_held(
+    immutable_store: Arc<dyn ImmutableStore>,
+    mutable_store: Arc<dyn MutableStore>,
+) -> Result<Vec<RepositoryId>, Status> {
+    let repository = Arc::new(RepositoryContext::new_server_context(
+        immutable_store,
+        mutable_store,
+        Context::default().into(),
+    ));
+    let mut stream = repository::list_local(repository)
+        .await
+        .filter_slow_down()?
+        .warn_map_err(|err| Status::internal(format!("Failed to list repositories: {err}")))?;
+    let mut held = Vec::new();
+    while let Some(id) = stream.next().await {
+        held.push(id.into());
+    }
+    Ok(held)
 }
 
 #[async_trait]
@@ -183,15 +191,30 @@ fn page(
     Ok((held, next))
 }
 
+/// The resource a `UrcAuthApi` grant names to cover every partition.
+const ALL_PARTITIONS_RESOURCE: &str = "urc-*";
+
 /// A `RepositoryCatalog` implementation using`UrcAuthApi`.
-/// Calls `LookupUserPermissions`.
+/// Calls `LookupUserPermissions`. The auth service knows the partitions it
+/// was told about, so a caller it reports a grant on every partition for is
+/// answered from the server's own store instead.
 pub struct AuthClientRepositoryCatalog {
     auth_url: String,
+    immutable_store: Arc<dyn ImmutableStore>,
+    mutable_store: Arc<dyn MutableStore>,
 }
 
 impl AuthClientRepositoryCatalog {
-    pub fn new(auth_url: String) -> Self {
-        Self { auth_url }
+    pub fn new(
+        auth_url: String,
+        immutable_store: Arc<dyn ImmutableStore>,
+        mutable_store: Arc<dyn MutableStore>,
+    ) -> Self {
+        Self {
+            auth_url,
+            immutable_store,
+            mutable_store,
+        }
     }
 }
 
@@ -222,8 +245,23 @@ impl RepositoryCatalog for AuthClientRepositoryCatalog {
                 ))
             })?;
 
-        Ok(repositories_from_response(permissions.into_inner()))
+        let permissions = permissions.into_inner();
+        if grants_all_partitions(&permissions) {
+            let held = list_held(self.immutable_store.clone(), self.mutable_store.clone()).await?;
+            return page(held, page_size, page_token);
+        }
+        Ok(repositories_from_response(permissions))
     }
+}
+
+/// Whether a `LookupUserPermissions` response carries a grant on every
+/// partition rather than on named ones.
+#[lore_macro::test_pub]
+fn grants_all_partitions(response: &LookupUserPermissionsResponse) -> bool {
+    response
+        .resource_permission
+        .iter()
+        .any(|permission| permission.resource_id == ALL_PARTITIONS_RESOURCE)
 }
 
 #[lore_macro::test_pub]
@@ -349,7 +387,11 @@ pub fn repository_catalog(
             if auth.is_some_and(|auth| auth.baseline_access == BaselineAccess::Reachable) {
                 warn!("[server.auth] baseline_access is not consulted by the auth_service catalog");
             }
-            Arc::new(AuthClientRepositoryCatalog::new(url))
+            Arc::new(AuthClientRepositoryCatalog::new(
+                url,
+                immutable_store,
+                mutable_store,
+            ))
         }
     })
 }

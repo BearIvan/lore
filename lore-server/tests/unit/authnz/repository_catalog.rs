@@ -401,6 +401,29 @@ fn response_yields_partitions_and_skips_other_resources() {
     );
 }
 
+#[test]
+fn only_the_wildcard_resource_grants_all_partitions() {
+    let response = |resource_ids: &[&str]| LookupUserPermissionsResponse {
+        resource_permission: resource_ids
+            .iter()
+            .map(|resource_id| ResourcePermission {
+                resource_id: (*resource_id).to_string(),
+                permission: vec!["read".to_string()],
+            })
+            .collect(),
+        next_page_token: None,
+    };
+    assert!(grants_all_partitions(&response(&[
+        "urc-0194b726b34e72b0b45550b88a967076",
+        "urc-*",
+    ])));
+    assert!(!grants_all_partitions(&response(&[
+        "urc-0194b726b34e72b0b45550b88a967076",
+        "urc-not-a-partition",
+    ])));
+    assert!(!grants_all_partitions(&response(&[])));
+}
+
 fn auth_settings(extra: &str) -> AuthSettings {
     toml::from_str(&format!(
         "jwt_issuer = \"https://auth.example.com\"\njwt_audience = [\"lore\"]\n{extra}"

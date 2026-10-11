@@ -774,6 +774,24 @@ pub async fn remove_user_token(endpoint: &str, identity: &str) -> Result<(), Tok
     Ok(())
 }
 
+/// Resolves a user name to the id of the stored login it names.
+///
+/// Returns `None` when `name` already is a stored user id, when no stored
+/// login carries that name, or when logins of different users do.
+pub async fn stored_user_id_for_name(name: &str) -> Option<String> {
+    let identities = load_all_identities(true).await.ok()?;
+    if identities.iter().any(|identity| identity.user_id == name) {
+        return None;
+    }
+    let mut named = identities.into_iter().filter_map(|identity| {
+        let info = crate::jwt::user_info_from_token(identity.token)?;
+        (info.name.eq_ignore_ascii_case(name) || info.preferred_username.eq_ignore_ascii_case(name))
+            .then_some(identity.user_id)
+    });
+    let user_id = named.next()?;
+    named.all(|other| other == user_id).then_some(user_id)
+}
+
 pub async fn load_identities(auth_endpoint: &str) -> Result<Vec<String>, TokenStoreError> {
     lore_trace!("Load user identities for endpoint {auth_endpoint}");
 

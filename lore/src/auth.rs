@@ -674,6 +674,16 @@ pub async fn local_user_info(
     dispatch_call(globals, args, callback, local_user_info_impl).await
 }
 
+/// The auth service every stored login belongs to, if there is exactly one.
+async fn single_stored_auth_url() -> Option<String> {
+    let identities = lore_credential::token_store::load_all_identities(false)
+        .await
+        .ok()?;
+    let mut auth_urls = identities.into_iter().map(|identity| identity.auth_url);
+    let auth_url = auth_urls.next()?;
+    auth_urls.all(|other| other == auth_url).then_some(auth_url)
+}
+
 #[lore_macro::test_pub]
 async fn resolve_auth_endpoint(
     auth_endpoint: &str,
@@ -707,6 +717,11 @@ async fn resolve_auth_endpoint(
         // Without a repository there is nowhere to read a remote from, and the fix is to
         // run this from one (or pass an endpoint) rather than to configure anything.
         RepositoryRemote::NoRepository => {
+            // With a login for a single auth service stored, that service is
+            // the only one the question can be about.
+            if let Some(auth_url) = single_stored_auth_url().await {
+                return Ok(auth_url);
+            }
             return Err(RepositoryNotFound {
                 repository: repository_path.to_string(),
             }

@@ -191,7 +191,7 @@ impl Authentication for UcsAuthentication {
             expires_ms: user_token.expires_at.max(0) as u64,
             // Populated by orchestration layer via JWT decode, not the proto response
             acceptable_root_domains: Vec::new(),
-            refresh_token: None,
+            refresh_token: user_token.refresh_token.filter(|token| !token.is_empty()),
         })
     }
 

@@ -518,6 +518,7 @@ pub(crate) async fn sync(
     let mut remote_latest = Hash::default();
     let mut remote_available = false;
     let mut remote_authorized = false;
+    let offline_or_local = execution_context().globals().offline_or_local();
 
     // Unreadable answers for divergent: what is not known to stand in the remote's
     // history is what the divergence handling below exists for.
@@ -537,6 +538,15 @@ pub(crate) async fn sync(
                 Err(err) if err.is_branch_not_found() => {
                     remote_authorized = true;
                 }
+                // The remote answered and turned the caller away. Carrying on
+                // against local history would report an outdated working tree
+                // as synchronized; --offline and --local ask for that outright.
+                Err(err)
+                    if !offline_or_local
+                        && (err.is_not_authenticated() || err.is_not_authorized()) =>
+                {
+                    return Err(err).forward::<SyncError>("Failed to read remote revision");
+                }
                 Err(err) => {
                     lore_debug!("Remote branch query failed: {err}");
                 }
@@ -545,6 +555,11 @@ pub(crate) async fn sync(
         }
         // No remote configured for this repository, nothing to report
         Err(err) if err.is_no_remote() => {}
+        Err(err)
+            if !offline_or_local && (err.is_not_authenticated() || err.is_not_authorized()) =>
+        {
+            return Err(err).forward::<SyncError>("Failed to connect to remote");
+        }
         // Remote is configured but the connection failed
         Err(err) => {
             lore_debug!("Remote connection failed: {err}");

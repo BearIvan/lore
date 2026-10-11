@@ -2154,6 +2154,16 @@ pub async fn load_and_connect_with_token(
         identity = Some(given_identity.to_string());
     } else if let Some(config_identity) = identity.clone() {
         lore_debug!("Using repository config identity: {config_identity}");
+        // Credentials are stored by user id. A config that holds the user's
+        // name instead matches none of them and leaves every remote operation
+        // unauthenticated, so point it at the login that name belongs to.
+        if let Some(user_id) =
+            lore_credential::token_store::stored_user_id_for_name(&config_identity).await
+        {
+            lore_debug!("Repository config identity {config_identity} names user {user_id}");
+            identity = Some(user_id);
+            identity_resolved_from_auth = true;
+        }
     } else if !global.offline()
         && let Some(remote_url) = config.remote_url.as_deref()
         && !remote_url.is_empty()

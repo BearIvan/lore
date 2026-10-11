@@ -112,7 +112,9 @@ class Bridge(rpc.UrcAuthApiServicer):
   _,_,user=self.principal(context)
   registry=json.load(open('/etc/lore-auth/repositories.json'))
   candidates=set('urc-'+rid for rid in registry.values())
-  candidates.update(g.get('resource_id','') for g in self.grants(user) if g.get('resource_id')!='urc-*')
+  # A grant on every repository is passed on as it is: the server lists what
+  # it holds for it, which this catalog only knows for registered names.
+  candidates.update(g.get('resource_id','') for g in self.grants(user))
   entries=[]
   for resource in sorted(candidates):
    permission=self.permission(user,resource)

@@ -161,6 +161,15 @@ pub(crate) async fn create_with_metadata(
     let context = execution_context();
     let call = context.globals();
 
+    // Creation registers the repository on the server and writes the local
+    // one in a single pass, with nothing to report short of doing it.
+    if call.dry_run() {
+        return Err(NotSupported {
+            operation: "repository create with --dry-run".to_string(),
+        }
+        .into());
+    }
+
     let path = path.as_ref();
 
     // A local repository is the only kind that has no remote, and `--offline` / `--local`
