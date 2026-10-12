@@ -9,6 +9,8 @@ Release notes for the open source Lore project. Releases before v0.8.4 predate t
 
 ### Features
 
+- The Keycloak adapter in `contrib/keycloak` accepts `lore auth login --token-type api-key`: the key is the id and secret of a Keycloak client holding a service account, which `lore-access service-create` sets up. A build agent or setup script logs in with it where no browser is at hand
+
 ### Fixes & Improvements
 
 - `lore sync` fails with `NotAuthenticated` or `NotAuthorized` when the remote turns the caller away, instead of warning, synchronizing against local history and exiting with 0. A script could not tell an outdated working tree from an updated one. `--offline` and `--local` still synchronize against local history, and an unreachable remote still falls back to it

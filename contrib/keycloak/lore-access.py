@@ -12,8 +12,8 @@ def duration_seconds(value):
  if seconds>2147483647: raise argparse.ArgumentTypeError('Duration exceeds Keycloak integer limit')
  return seconds
 
-def session_settings(duration):
- """Keep idle lifetime equal to absolute lifetime, including closed clients."""
+def admin_session():
+ """Realm administrator session, for what the management account may not change."""
  credentials=json.load(open('/etc/lore-auth/bootstrap.json'))
  s=requests.Session(); s.verify=CA
  r=s.post(BASE+'/realms/master/protocol/openid-connect/token',data={
@@ -21,6 +21,52 @@ def session_settings(duration):
   'username':credentials['admin_username'],'password':credentials['admin_password']},timeout=20)
  if not r.ok: sys.exit('Realm administrator authentication failed; no changes made')
  s.headers['Authorization']='Bearer '+r.json()['access_token']
+ return s
+
+def service(cmd,name,lifetime):
+ """A service is a Keycloak client with a service account; its key is the client id and secret."""
+ import re
+ if not re.fullmatch('[a-z0-9][a-z0-9-]{0,40}',name): sys.exit('Use a lowercase name of letters, digits and dashes, at most 41 characters')
+ s=admin_session(); url=BASE+'/admin/realms/lore'; client_id='lore-service-'+name
+ key_path='/etc/lore-auth/issued-service-keys/'+name+'.key'
+ def request(method,path,**kwargs):
+  response=s.request(method,url+path,timeout=20,**kwargs)
+  if not response.ok: sys.exit(f'{method} {path.split("?")[0]}: HTTP {response.status_code}')
+  return response.json() if response.content else None
+ found=request('GET','/clients?clientId='+client_id)
+ if cmd=='service-create':
+  if found: sys.exit('Service already exists')
+  cli=request('GET','/clients?clientId=lore-cli')
+  if len(cli)!=1: sys.exit('Lore client not found; no changes made')
+  # A service token has to pass the checks a user token passes, so it is
+  # shaped by the same mappers.
+  mappers=[{key:mapper[key] for key in ('name','protocol','protocolMapper','config')} for mapper in cli[0].get('protocolMappers',[])]
+  request('POST','/clients',json={'clientId':client_id,'name':'Lore service '+name,'enabled':True,'protocol':'openid-connect',
+   'publicClient':False,'serviceAccountsEnabled':True,'standardFlowEnabled':False,'implicitFlowEnabled':False,
+   'directAccessGrantsEnabled':False,'attributes':{'access.token.lifespan':str(lifetime)},'protocolMappers':mappers})
+  client=request('GET','/clients?clientId='+client_id)[0]
+  user=request('GET','/clients/'+client['id']+'/service-account-user')
+  user.setdefault('attributes',{})['lore_resources']=['[]']
+  request('PUT','/users/'+user['id'],json=user)
+ else:
+  if len(found)!=1: sys.exit('Service not found')
+  client=found[0]
+  user=request('GET','/clients/'+client['id']+'/service-account-user')
+  if cmd=='service-delete':
+   request('DELETE','/clients/'+client['id'])
+   if os.path.exists(key_path): os.remove(key_path)
+   print('Service deleted; its key and tokens are refused from now on.'); return
+  request('POST','/clients/'+client['id']+'/client-secret')
+ secret=request('GET','/clients/'+client['id']+'/client-secret')['value']
+ os.makedirs(os.path.dirname(key_path),mode=0o700,exist_ok=True)
+ with open(os.open(key_path,os.O_WRONLY|os.O_CREAT|os.O_TRUNC,0o600),'w') as f: f.write(client_id+'.'+secret+'\n')
+ if cmd=='service-create': print('Service created with NO repository access. Grant it with: lore-access grant '+user['username']+' <repository> --access read')
+ else: print('Service key replaced; the previous key is refused from now on.')
+ print('Key file: '+key_path)
+
+def session_settings(duration):
+ """Keep idle lifetime equal to absolute lifetime, including closed clients."""
+ s=admin_session()
  url=BASE+'/admin/realms/lore'
  def request(method,url,**kwargs):
   response=s.request(method,url,timeout=20,**kwargs)
@@ -51,6 +97,10 @@ def main():
  sub=p.add_subparsers(dest='cmd',required=True)
  q=sub.add_parser('session-settings',help='Show/set login lifetime independently of activity')
  q.add_argument('--duration',type=duration_seconds,help='Absolute login lifetime, e.g. 8h, 7d, 1w')
+ q=sub.add_parser('service-create',help='Create a service account that logs in with a key instead of a browser')
+ q.add_argument('name'); q.add_argument('--token-lifetime',type=duration_seconds,default=43200,help='How long one key login lasts, e.g. 12h')
+ for name in ['service-key-reset','service-delete']:
+  q=sub.add_parser(name); q.add_argument('name')
  sub.add_parser('repositories')
  q=sub.add_parser('repository-register'); q.add_argument('name'); q.add_argument('repository_id')
  for name in ['user-create','user-disable','password-reset','grants']:
@@ -64,6 +114,8 @@ def main():
  a=p.parse_args()
  if a.cmd=='session-settings':
   session_settings(a.duration); return
+ if a.cmd.startswith('service-'):
+  service(a.cmd,a.name,getattr(a,'token_lifetime',None)); return
  registry_path='/etc/lore-auth/repositories.json'
  registry=json.load(open(registry_path))
  if a.cmd=='repositories':

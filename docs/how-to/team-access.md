@@ -35,6 +35,29 @@ Supplied `--identity-token` and `--access-token` values are never replaced by
 cached credentials. Refresh responses must retain the identity and issuer and
 pass the client's token-recipient check before they are saved.
 
+A machine that cannot sign in through a browser, such as a build agent or a
+setup script, uses a service account:
+
+```sh
+sudo lore-access service-create vircon-setup
+sudo lore-access grant service-account-lore-service-vircon-setup VirconWorlds --access read
+sudo lore-access service-key-reset vircon-setup
+sudo lore-access service-delete vircon-setup
+```
+
+```powershell
+lore auth login lore://10.8.0.1:41337 --token-type api-key --token <key>
+```
+
+A service is a Keycloak client with a service account, and its key is that
+client's id and secret; `service-create` writes it to a root-only file and
+prints the path. The adapter passes the key to Keycloak as a client-credentials
+grant and returns the token Keycloak signs, so it stores no key itself. A
+service starts with no repository grants and takes them like a user does. Such
+a login is not refreshed: it lasts `--token-lifetime`, 12 hours unless set, and
+the key logs in again. Whoever holds the key has the service's grants, so give
+a service only the access its job needs.
+
 To use local repository-administration grants without an external ReBAC API:
 
 ```toml

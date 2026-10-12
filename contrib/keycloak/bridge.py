@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 """UrcAuthApi compatibility adapter. Keycloak owns identities and signing keys."""
-import json,time,threading,secrets,fnmatch,logging,ssl,os
+import json,re,time,threading,secrets,fnmatch,logging,ssl,os
 from concurrent.futures import ThreadPoolExecutor
 import grpc,jwt,requests
 import auth_api_pb2 as pb
@@ -88,7 +88,20 @@ class Bridge(rpc.UrcAuthApiServicer):
  def VerifyUser(self,request,context):
   _,claims,user=self.principal(context)
   return pb.VerifyUserResponse(user_info=pb.UserInfo(user_id=claims['sub'],display_name=user['username']))
+ def service_login(self,key,context):
+  # A service key is the id and secret of a Keycloak client that holds a
+  # service account, joined by a dot. Keycloak checks the secret and signs the
+  # token; this adapter stores neither. Only clients named as services are
+  # tried, so the secret of no other client is of use here.
+  client_id,_,secret=key.partition('.')
+  if not re.fullmatch('lore-service-[a-z0-9-]{1,41}',client_id) or not secret: context.abort(grpc.StatusCode.UNAUTHENTICATED,'Invalid service key')
+  try: r=requests.post(ISSUER+'/protocol/openid-connect/token',verify=CA,timeout=15,data={'grant_type':'client_credentials','client_id':client_id,'client_secret':secret})
+  except requests.RequestException: context.abort(grpc.StatusCode.UNAVAILABLE,'Login provider unavailable')
+  if not r.ok: context.abort(grpc.StatusCode.UNAUTHENTICATED,'Invalid service key')
+  token=r.json()['access_token']; claims,user=self.verify(token,context)
+  return self.user_token(token,claims,user)
  def ExchangeExternalTokenForUserToken(self,request,context):
+  if request.token_type=='api-key': return pb.ExchangeExternalTokenForUserTokenResponse(user_token=self.service_login(request.external_token,context))
   if request.token_type not in ('lore','keycloak'): context.abort(grpc.StatusCode.INVALID_ARGUMENT,'Unsupported token type')
   claims,user=self.verify(request.external_token,context)
   return pb.ExchangeExternalTokenForUserTokenResponse(user_token=self.user_token(request.external_token,claims,user))
