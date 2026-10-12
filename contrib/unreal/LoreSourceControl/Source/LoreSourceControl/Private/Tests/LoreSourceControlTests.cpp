@@ -435,7 +435,7 @@ bool FLoreSourceControlIntegrationTest::RunTest(const FString& Parameters)
 
 	TestEqual(TEXT("Untracked file reads as not controlled"), (int32)StateOf(false).WorkingCopyState, (int32)ELoreWorkingCopyState::NotControlled);
 
-	// Out-of-tree paths (engine content) are skipped, not failed, and read as not controlled.
+	// Out-of-tree paths (engine content) are skipped, not failed, and read as ignored.
 	{
 		const FString OutsidePath = FPaths::Combine(FString(FPlatformProcess::UserTempDir()), TEXT("LoreOutsideProbe"), TEXT("outside.txt"));
 		TArray<FLoreSourceControlState> MixedStates;
@@ -445,7 +445,7 @@ bool FLoreSourceControlIntegrationTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("Both paths return a state"), MixedStates.Num(), 2);
 		if (MixedStates.Num() == 2)
 		{
-			TestEqual(TEXT("Out-of-tree path reads as not controlled"), (int32)MixedStates[1].WorkingCopyState, (int32)ELoreWorkingCopyState::NotControlled);
+			TestEqual(TEXT("Out-of-tree path reads as ignored"), (int32)MixedStates[1].WorkingCopyState, (int32)ELoreWorkingCopyState::Ignored);
 		}
 	}
 

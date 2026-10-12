@@ -695,7 +695,8 @@ bool RunUpdateStatus(const FString& InPathToLoreBinary, const FString& InReposit
 
 		if (!IsInTree(InFiles[Index]))
 		{
-			State.WorkingCopyState = ELoreWorkingCopyState::NotControlled;
+			// Ignored, not NotControlled: a file outside the repository can never be added, and CanAdd() makes submit validation demand it.
+			State.WorkingCopyState = ELoreWorkingCopyState::Ignored;
 			OutStates.Add(MoveTemp(State));
 			continue;
 		}
